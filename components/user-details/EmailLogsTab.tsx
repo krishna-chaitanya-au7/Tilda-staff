@@ -208,6 +208,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
   badgeGray: {
     paddingHorizontal: 8,
     paddingVertical: 2,

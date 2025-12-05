@@ -203,7 +203,7 @@ export default function SupervisorQRRequestsScreen() {
       const { data: userRow } = await supabase.from('users').select('id, record_id').eq('auth_id', user.id).single();
       if (!userRow) return;
 
-      setCurrentUserId(user.id);
+      setCurrentUserId(userRow.id);
 
       const userId = userRow.id;
       const recordId = userRow.record_id;

@@ -37,7 +37,7 @@ interface ChildData {
   is_bus_child?: boolean;
   pickup_info?: string;
   supervision_schedule: DailySchedule[];
-  supervision_groups: { [key: string]: string };
+  supervision_groups: { [key: string]: string | null };
 }
 
 interface FilterOption {

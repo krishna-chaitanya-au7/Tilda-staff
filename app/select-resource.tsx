@@ -48,7 +48,7 @@ export default function SelectResourceScreen() {
 
   const handleSelect = (access: UserAccess) => {
     if (access.resource_type) {
-      router.replace(`/${access.resource_type}`);
+      router.replace(`/${access.resource_type}` as any);
     }
   };
 
@@ -114,6 +114,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
+
 
 
 

@@ -306,10 +306,10 @@ export default function SupervisorAttendanceScreen() {
   const [sendMessageOpen, setSendMessageOpen] = useState(false);
 
   // Sorting
-  const [sortCol, setSortCol] = useState<'name' | 'class'>('name');
+  const [sortCol, setSortCol] = useState<'name' | 'class' | 'lunch' | 'status'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
-  const handleSort = (col: 'name' | 'class') => {
+  const handleSort = (col: 'name' | 'class' | 'lunch' | 'status') => {
     if (sortCol === col) {
       setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
@@ -747,16 +747,33 @@ export default function SupervisorAttendanceScreen() {
         if (sortCol === 'name') {
            valA = `${a.family_name} ${a.first_name}`.toLowerCase();
            valB = `${b.family_name} ${b.first_name}`.toLowerCase();
-        } else {
+        } else if (sortCol === 'class') {
            valA = (a.children_info?.class || '').toString().toLowerCase();
            valB = (b.children_info?.class || '').toString().toLowerCase();
+        } else if (sortCol === 'lunch') {
+           const mealA = mealSelections.find(m => m.user_id === a.id);
+           const mealB = mealSelections.find(m => m.user_id === b.id);
+           const hasMealA = mealA && !mealA.is_deleted && !mealA.is_skipped;
+           const hasMealB = mealB && !mealB.is_deleted && !mealB.is_skipped;
+           valA = hasMealA ? (mealA?.menuline?.name || 'Menu') : '';
+           valB = hasMealB ? (mealB?.menuline?.name || 'Menu') : '';
+        } else if (sortCol === 'status') {
+           const attA = getAttendanceStatus(a);
+           const attB = getAttendanceStatus(b);
+           const getStatus = (rec?: ChildAttendance) => {
+             if (rec?.is_leave) return 'on leave';
+             return (rec?.status || 'pending').toLowerCase();
+           };
+           valA = getStatus(attA);
+           valB = getStatus(attB);
         }
+
         // Use numeric sort to handle "Class 1" vs "Class 10" correctly
         return sortDir === 'asc' 
           ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' })
           : valB.localeCompare(valA, undefined, { numeric: true, sensitivity: 'base' });
       });
-  }, [children, searchTerm, classFilter, groupFilter, statusFilter, attendanceRecords, sortCol, sortDir]);
+  }, [children, searchTerm, classFilter, groupFilter, statusFilter, attendanceRecords, mealSelections, sortCol, sortDir]);
 
   // --- Stats ---
 
@@ -1019,8 +1036,31 @@ export default function SupervisorAttendanceScreen() {
                 />
               </TouchableOpacity>
 
-              <Text style={[styles.headerCell, { flex: 1.5 }]}>Essen</Text>
-              <Text style={[styles.headerCell, { width: 80 }]}>Status</Text>
+              <TouchableOpacity 
+                style={{ flex: 1.5, flexDirection: 'row', alignItems: 'center' }}
+                onPress={() => handleSort('lunch')}
+              >
+                <Text style={styles.headerCell}>Essen</Text>
+                <Ionicons 
+                  name={sortCol === 'lunch' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
+                  size={12} 
+                  color={sortCol === 'lunch' ? "#000" : "#ccc"} 
+                  style={{ marginLeft: 4 }}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={{ width: 80, flexDirection: 'row', alignItems: 'center' }}
+                onPress={() => handleSort('status')}
+              >
+                <Text style={styles.headerCell}>Status</Text>
+                <Ionicons 
+                  name={sortCol === 'status' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
+                  size={12} 
+                  color={sortCol === 'status' ? "#000" : "#ccc"} 
+                  style={{ marginLeft: 4 }}
+                />
+              </TouchableOpacity>
               <Text style={[styles.headerCell, { width: 160, textAlign: 'center' }]}>Aktion</Text>
             </View>
           </View>

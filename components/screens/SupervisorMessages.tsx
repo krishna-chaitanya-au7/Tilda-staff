@@ -1,10 +1,11 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, KeyboardAvoidingView, Platform, Modal, Alert, Switch } from 'react-native';
+import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, KeyboardAvoidingView, Platform, Modal, Alert, Switch, Linking } from 'react-native';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -61,6 +62,7 @@ interface Message {
   sender_id: string;
   attachments?: any[];
   poll?: Poll;
+  readBy?: string[]; // Add readBy property
 }
 
 interface ParentOption {
@@ -104,6 +106,12 @@ export default function SupervisorMessages() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [newMessageText, setNewMessageText] = useState('');
   const flatListRef = useRef<FlatList>(null);
+  const messagesRef = useRef<Message[]>([]); // Ref to access current messages in realtime callbacks
+
+  // Keep ref synced with state
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // New Conversation Modal State
   const [isNewConvModalVisible, setIsNewConvModalVisible] = useState(false);
@@ -121,9 +129,12 @@ export default function SupervisorMessages() {
   const [showParticipantsOverlay, setShowParticipantsOverlay] = useState(false);
   const [showPollComposer, setShowPollComposer] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
-  const [pollOptions, setPollOptions] = useState(['Ja', 'Nein']);
+  const [pollOptions, setPollOptions] = useState(['Yes', 'No']);
   const [pollMultiple, setPollMultiple] = useState(false);
   const [uploading, setUploading] = useState(false);
+  
+  // Image Viewer State
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // --- DERIVED STATE ---
   
@@ -154,12 +165,23 @@ export default function SupervisorMessages() {
     if (selectedThreadId) {
        fetchMessages(selectedThreadId);
        subscribeToMessages(selectedThreadId);
+
+       // Polling fallback: Refresh messages every 5 seconds to ensure vote counts are up to date
+       // This covers cases where Realtime events are missed or delayed
+       const intervalId = setInterval(() => {
+          if (messagesRef.current.some(m => m.poll)) {
+             // Only poll if there's a poll in the thread to save resources
+             fetchMessages(selectedThreadId, false);
+          }
+       }, 5000);
+
+       return () => {
+          clearInterval(intervalId);
+          supabase.removeAllChannels();
+       };
     } else {
        setMessages([]);
     }
-    return () => {
-       supabase.removeAllChannels();
-    };
   }, [selectedThreadId]);
 
   // --- FUNCTIONS ---
@@ -177,8 +199,22 @@ export default function SupervisorMessages() {
         },
         (payload) => {
           const newMsg = payload.new as any;
+          
+          // If message is empty (no body, no attachments), it's likely a poll being created.
+          // We should NOT add it here, because we don't have the poll data yet.
+          // We will wait for the 'msg_polls' INSERT event or the manual fetch to load it with the poll.
+          // This prevents a "blank message" bubble from appearing before the poll data is ready.
+          if (!newMsg.body && (!newMsg.attachments || newMsg.attachments.length === 0)) {
+             return;
+          }
+
           setMessages((prev) => {
+             // If we already have this message (e.g. from fetchMessages), don't duplicate/overwrite
+             // unless we want to ensure it's visible. 
+             // But fetchMessages fetches the POLL data too. The realtime payload DOES NOT have poll data.
+             // So if we overwrite a full message with this partial one, we lose the poll.
              if (prev.find(m => m.id === newMsg.id)) return prev;
+             
              return [{
                id: newMsg.id,
                content: newMsg.body,
@@ -189,14 +225,57 @@ export default function SupervisorMessages() {
           });
         }
       )
+      .on(
+         'postgres_changes',
+         {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'msg_polls',
+         },
+         (payload) => {
+            // Only refresh if the poll belongs to a message in this thread
+            const messageId = payload.new.message_id;
+            const isRelevant = messagesRef.current.some(m => m.id === messageId);
+            
+            if (isRelevant) {
+               console.log("New poll detected for current thread, refreshing...");
+               fetchMessages(threadId, false);
+            }
+         }
+      )
+      .on(
+         'postgres_changes',
+         {
+            event: '*', // Listen for votes (inserts/deletes)
+            schema: 'public',
+            table: 'msg_poll_votes',
+         },
+         (payload) => {
+             // Refresh messages on any vote change to ensure we catch it
+             console.log("Vote detected, refreshing thread...");
+             fetchMessages(threadId, false);
+         }
+      )
+      .on(
+         'postgres_changes',
+         {
+            event: '*', 
+            schema: 'public',
+            table: 'msg_thread_reads',
+            filter: `thread_id=eq.${threadId}`,
+         },
+         (payload) => {
+             console.log("Read receipt update, refreshing...");
+             fetchMessages(threadId, false);
+         }
+      )
       .subscribe();
   };
 
   const fetchMessages = async (threadId: string, showLoading = true) => {
     if (showLoading) setLoadingMessages(true);
     try {
-       // Simplified query to avoid one-to-many cardinality errors with explicit joining
-       // We fetch messages first with sender details
+       // 1. Fetch Messages first (without polls to avoid embedding errors)
        const { data: msgs, error } = await supabase
          .from('msg_thread_messages')
          .select(`
@@ -208,50 +287,153 @@ export default function SupervisorMessages() {
        
        if (error) throw error;
 
-       // Then fetch polls for these messages if any
-       const msgIds = msgs?.map(m => m.id) || [];
-       let pollsMap = new Map();
+       // Fetch Read Receipts
+       const { data: readReceipts } = await supabase
+          .from('msg_thread_reads')
+          .select('user_id, last_read_message_id')
+          .eq('thread_id', threadId);
 
-       if (msgIds.length > 0) {
-          const { data: polls } = await supabase
-             .from('msg_polls')
-             .select(`
-                id, message_id, question, multiple_choice,
-                msg_poll_options (
-                   id, label, position,
-                   msg_poll_votes (voter_id)
-                )
-             `)
-             .in('message_id', msgIds);
-          
-          polls?.forEach((p: any) => {
-             pollsMap.set(p.message_id, p);
-          });
-       }
+       // 2. Fetch Polls for messages (Parallel, per message - matching web app logic)
+       const pollsByMsg = new Map<string, Poll>();
        
+       if (msgs && msgs.length > 0) {
+          await Promise.all(msgs.map(async (m: any) => {
+             // Check for poll
+             const { data: pollRow } = await supabase
+                .from('msg_polls')
+                .select('id, question, multiple_choice')
+                .eq('message_id', m.id)
+                .maybeSingle();
+
+             if (pollRow) {
+                // Fetch options
+                const { data: options } = await supabase
+                   .from('msg_poll_options')
+                   .select('id, label, position')
+                   .eq('poll_id', pollRow.id)
+                   .order('position');
+
+                // Fetch votes
+                const { data: votes } = await supabase
+                   .from('msg_poll_votes')
+                   .select('option_id, voter_id')
+                   .eq('poll_id', pollRow.id);
+
+                // Assemble poll object
+                const pollObj: Poll = {
+                   id: pollRow.id,
+                   question: pollRow.question,
+                   multiple_choice: pollRow.multiple_choice,
+                   options: (options || []).map((o: any) => {
+                      const relevantVotes = votes?.filter((v: any) => v.option_id === o.id) || [];
+                      return {
+                         id: o.id,
+                         label: o.label,
+                         position: o.position,
+                         votes: relevantVotes.length,
+                         selected: relevantVotes.some((v: any) => v.voter_id === userRow?.id)
+                      };
+                   }).sort((a: any, b: any) => a.position - b.position)
+                };
+                
+                pollsByMsg.set(m.id, pollObj);
+             }
+          }));
+       }
+
        const formatted = (msgs || []).map((m: any) => {
-          const pollData = pollsMap.get(m.id);
-          let poll: Poll | undefined;
+          const poll = pollsByMsg.get(m.id);
           
-          // Find sender details from participants if possible, or assume current user if it's me
-          // We need to pass participants to this function or store them in a map?
-          // For now, we can look up in the currently selected thread's participants
-          // But fetchMessages doesn't have access to 'threads' state directly in a clean way if we don't pass it.
-          // However, we can just fetch sender details in the message query or assume we have them.
-          // Supabase query didn't fetch sender details. Let's update the query.
+          // Calculate who read this message
+          // A user has read this message if their last_read_message_id >= this message's ID
+          // Note: IDs are usually time-ordered or sequential, but UUIDs are not. 
+          // Assuming messages are ordered by created_at descending, we can check if the receipt's last_read_msg created_at >= this msg
+          // BUT msg_thread_reads usually stores the ID.
+          // IMPORTANT: UUID comparison is not valid for time. We need to rely on the fact that if a user has read a LATER message, they read this one.
+          // But finding "later" requires looking up the created_at of the read message.
+          // SIMPLIFIED APPROACH: Client-side, we know the order. 
+          // Server-side logic usually updates last_read_message_id to the NEWEST message read.
           
+          // Let's map message IDs to their index/date to check "read status" properly?
+          // Or just check if this specific ID is in the "read list"? No, it's a cursor.
+          // Ideally, we fetch read receipts, find the message corresponding to that ID, get its date, and compare.
+          // Optimization: Just return the list of users who have read *at least* this message.
+          
+          // For now, let's just attach the raw read receipts to the state or processed list if we can map them.
+          // Actually, to show double ticks, we just need to know if *anyone other than me* has read it? 
+          // Or specifically the recipient?
+          // "readBy" should be a list of user IDs.
+          
+          // We need to know which messages are "older or equal" to the last_read_message_id for each user.
+          // Since we don't have easy comparison of UUIDs, we'll do this:
+          // 1. Find the "index" or "timestamp" of the message referenced in the receipt.
+          // 2. Compare with current message.
+          
+          const readBy = (readReceipts || [])
+             .filter((r: any) => {
+                if (r.user_id === userRow?.id) return false; // Ignore self
+                // We need to check if m is "before or equal" to r.last_read_message_id
+                // This is O(N*M) potentially slow.
+                // Fast hack: If we assume the list `msgs` is sorted DESC (newest first):
+                // find index of receipt msg, find index of `m`. 
+                // If index(m) >= index(receipt_msg), then m is older/equal (since list is DESC).
+                const receiptMsgIndex = msgs?.findIndex((msg: any) => msg.id === r.last_read_message_id);
+                const currentMsgIndex = msgs?.findIndex((msg: any) => msg.id === m.id);
+                
+                if (receiptMsgIndex !== -1 && currentMsgIndex !== -1) {
+                   // If current message is "after" (higher index = older in DESC list) or same as receipt message
+                   return currentMsgIndex >= receiptMsgIndex; 
+                }
+                return false;
+             })
+             .map((r: any) => r.user_id);
+
           return {
             id: m.id,
             content: m.body,
             created_at: m.created_at,
             sender_id: m.sender_id,
-            sender: m.sender, // Pass sender details
+            sender: m.sender, 
             attachments: m.attachments,
-            poll
+            poll,
+            readBy
           };
        });
 
-       setMessages(formatted);
+       // Mark latest message as read by ME
+       if (msgs && msgs.length > 0 && userRow) {
+          const latestMsg = msgs[0];
+          // Only update if we haven't already marked it (optimistic check)
+          // We should do this in the background
+          supabase.from('msg_thread_reads')
+             .upsert({ 
+                thread_id: threadId, 
+                user_id: userRow.id, 
+                last_read_message_id: latestMsg.id,
+                read_at: new Date().toISOString()
+             }, { onConflict: 'thread_id, user_id' })
+             .then(({ error }) => {
+                if (error) console.error("Error marking read:", error);
+             });
+       }
+
+       setMessages(prev => {
+          // Create a map of new messages
+          const newMessages = formatted;
+          
+          // Intelligent merge
+          return newMessages.map(newMsg => {
+             const existingMsg = prev.find(p => p.id === newMsg.id);
+             
+             // Preservation Rule 1: Poll Data
+             // If new message has no poll, but existing one does, and new message looks like a poll placeholder (empty body), keep the poll
+             if (!newMsg.poll && existingMsg?.poll && !newMsg.content && (!newMsg.attachments || newMsg.attachments.length === 0)) {
+                return { ...newMsg, poll: existingMsg.poll };
+             }
+             
+             return newMsg;
+          });
+       });
     } catch (err) {
        console.error("Error fetching messages:", err);
     } finally {
@@ -272,7 +454,7 @@ export default function SupervisorMessages() {
       // 1. Resolve Supervisor ID
       const { data: uRow, error: userError } = await supabase
         .from('users')
-        .select('id, record_id')
+        .select('id, record_id, first_name, family_name')
         .eq('auth_id', user.id)
         .single();
 
@@ -638,15 +820,89 @@ export default function SupervisorMessages() {
      }
   };
 
-  // ... Image/Poll handlers (reused but need fixing types) ...
-  const handlePickImage = async () => { /* ... */ };
-  const uploadImage = async (asset: any) => { /* ... */ }; // simplified for brevity
+  // ... Image/Poll handlers ...
+  const handlePickImage = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*', // Allow all file types
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await uploadAttachment(result.assets[0]);
+      }
+    } catch (err) {
+      console.error("Document picker error:", err);
+      Alert.alert("Error", "Failed to pick file");
+    }
+  };
+
+  const uploadAttachment = async (asset: DocumentPicker.DocumentPickerAsset) => {
+    if (!selectedThreadId || !userRow || !supervisorId) return;
+    
+    setUploading(true);
+    try {
+      // 1. Read file
+      const response = await fetch(asset.uri);
+      const arrayBuffer = await response.arrayBuffer();
+      
+      // 2. Upload to Supabase
+      const fileName = asset.name || `file_${Date.now()}`;
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `supervisor/${supervisorId}/${selectedThreadId}/${Date.now()}_${safeName}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('messenger')
+        .upload(path, arrayBuffer, {
+          contentType: asset.mimeType || 'application/octet-stream',
+          cacheControl: '3153600000',
+          upsert: false
+        });
+        
+      if (uploadError) throw uploadError;
+      
+      // 3. Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('messenger')
+        .getPublicUrl(path);
+        
+      // 4. Create Message
+      const attachment = {
+        name: fileName,
+        size: asset.size,
+        type: asset.mimeType?.startsWith('image/') ? 'image' : 'file',
+        url: publicUrl,
+        path: path
+      };
+      
+      const { error: msgError } = await supabase.from('msg_thread_messages').insert({
+         thread_id: selectedThreadId,
+         sender_id: userRow.id,
+         body: '', 
+         attachments: [attachment]
+      });
+      
+      if (msgError) throw msgError;
+      
+      fetchMessages(selectedThreadId, false);
+      
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      Alert.alert("Error", "Failed to upload file: " + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+  
+  const handleOpenFile = (url: string) => {
+    Linking.openURL(url).catch(err => Alert.alert('Error', 'Could not open file'));
+  };
   
   // ... Polls logic ...
   const openPollComposer = () => {
     setShowPollComposer(true);
     setPollQuestion('');
-    setPollOptions(['Ja', 'Nein']);
+    setPollOptions(['Yes', 'No']);
     setPollMultiple(false);
   };
 
@@ -655,12 +911,42 @@ export default function SupervisorMessages() {
      setUploading(true);
 
      try {
+        const tempId = `temp_${Date.now()}`;
+        const tempPoll: Poll = {
+          id: tempId,
+          question: pollQuestion,
+          multiple_choice: pollMultiple,
+          options: pollOptions.filter(o => o.trim().length > 0).map((label, idx) => ({
+             id: `temp_opt_${idx}`,
+             label,
+             position: idx,
+             votes: 0,
+             selected: false
+          }))
+        };
+
+        // Optimistic update
+        const optimisticMsg: Message = {
+           id: tempId,
+           content: '',
+           created_at: new Date().toISOString(),
+           sender_id: userRow.id,
+           sender: userRow,
+           attachments: [],
+           poll: tempPoll
+        };
+
+        setMessages(prev => [optimisticMsg, ...prev]);
+        setShowPollComposer(false);
+        setPollQuestion('');
+        setPollOptions(['Yes', 'No']);
+
         const { data: msgData, error: msgError } = await supabase
            .from('msg_thread_messages')
            .insert({
               thread_id: selectedThreadId,
               sender_id: userRow.id,
-              body: 'Umfrage: ' + pollQuestion,
+              body: '', // Empty body for polls
               attachments: []
            })
            .select('id')
@@ -673,9 +959,8 @@ export default function SupervisorMessages() {
            .from('msg_polls')
            .insert({
               message_id: messageId,
-              question: pollQuestion,
-              multiple_choice: pollMultiple,
-              created_by: userRow.id
+              question: tempPoll.question,
+              multiple_choice: tempPoll.multiple_choice
            })
            .select('id')
            .single();
@@ -683,12 +968,10 @@ export default function SupervisorMessages() {
         if (pollError) throw pollError;
         const pollId = pollData.id;
 
-        const optionsToInsert = pollOptions
-           .filter(o => o.trim().length > 0)
-           .map((label, index) => ({
+        const optionsToInsert = tempPoll.options.map(opt => ({
               poll_id: pollId,
-              label: label.trim(),
-              position: index
+              label: opt.label,
+              position: opt.position
            }));
         
         const { error: optError } = await supabase
@@ -697,14 +980,44 @@ export default function SupervisorMessages() {
         
         if (optError) throw optError;
 
-        setShowPollComposer(false);
-        setPollQuestion('');
-        setPollOptions(['Ja', 'Nein']);
-        fetchMessages(selectedThreadId);
+        // Update state with REAL ID and Poll Data immediately to prevent flickering/blank message
+        // This avoids waiting for the fetch/realtime which might race against the database commit
+        const finalPoll: Poll = {
+           id: pollId,
+           question: tempPoll.question,
+           multiple_choice: tempPoll.multiple_choice,
+           options: optionsToInsert.map((o, i) => ({
+              id: `new_opt_${i}`, // We don't have real option IDs yet, but that's okay for display until refresh
+              label: o.label,
+              position: o.position,
+              votes: 0,
+              selected: false
+           }))
+        };
+
+        const finalMsg: Message = {
+           id: messageId, // Real UUID
+           content: '',
+           created_at: new Date().toISOString(),
+           sender_id: userRow.id,
+           sender: userRow,
+           attachments: [],
+           poll: finalPoll
+        };
+
+        setMessages(prev => prev.map(m => m.id === tempId ? finalMsg : m));
+
+        // Background fetch to eventually get consistent IDs for options etc.
+        // Delay slightly to ensure DB is consistent
+        setTimeout(() => {
+           fetchMessages(selectedThreadId, false);
+        }, 1000);
 
      } catch (err: any) {
         console.error("Poll creation error:", err);
         Alert.alert("Error", "Failed to create poll: " + err.message);
+        // Revert optimistic update by removing the temp message
+        setMessages(prev => prev.filter(m => m.id !== tempId));
      } finally {
         setUploading(false);
      }
@@ -712,6 +1025,29 @@ export default function SupervisorMessages() {
 
   const handleVote = async (pollId: string, optionId: string, currentSelected: boolean, multiple: boolean) => {
      if (!userRow) return;
+     
+     // Optimistic Update for Vote
+     setMessages(prev => prev.map(m => {
+        if (m.poll?.id === pollId) {
+           const newOptions = m.poll.options.map(o => {
+              if (o.id === optionId) {
+                 return {
+                    ...o,
+                    selected: !currentSelected,
+                    votes: currentSelected ? o.votes - 1 : o.votes + 1
+                 };
+              }
+              if (!multiple && !currentSelected && o.selected) {
+                 // Deselect others if single choice and we are selecting a new one
+                 return { ...o, selected: false, votes: o.votes - 1 };
+              }
+              return o;
+           });
+           return { ...m, poll: { ...m.poll, options: newOptions } };
+        }
+        return m;
+     }));
+
      try {
         if (currentSelected) {
            await supabase.from('msg_poll_votes').delete().match({ poll_id: pollId, option_id: optionId, voter_id: userRow.id });
@@ -731,19 +1067,57 @@ export default function SupervisorMessages() {
      if (!newMessageText.trim() || !selectedThreadId || !userRow) return;
      const text = newMessageText.trim();
      setNewMessageText('');
+
+     // Optimistic update
+     const tempId = `temp_${Date.now()}`;
+     const optimisticMsg: Message = {
+        id: tempId,
+        content: text,
+        created_at: new Date().toISOString(),
+        sender_id: userRow.id,
+        attachments: [],
+        readBy: [], // Add readBy for consistency
+        // Poll is undefined
+     };
+
+     setMessages(prev => [optimisticMsg, ...prev]);
+
+     // Update thread list immediately
+     setThreads(prev => prev.map(t => {
+        if (t.id === selectedThreadId) {
+           return {
+              ...t,
+              updated_at: new Date().toISOString(),
+              last_message: {
+                 content: text,
+                 created_at: new Date().toISOString(),
+                 sender_id: userRow.id
+              }
+           };
+        }
+        return t;
+     }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()));
+
      try {
-        const { error } = await supabase.from('msg_thread_messages').insert({
+        const { data, error } = await supabase.from('msg_thread_messages').insert({
            thread_id: selectedThreadId,
            sender_id: userRow.id,
            body: text,
            attachments: []
-        });
+        }).select().single();
+
         if (error) throw error;
-        fetchThreads(); // Update list
-        fetchMessages(selectedThreadId, false); // Update view
+
+        // Replace optimistic message with real one
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: data.id, created_at: data.created_at } : m));
+        
+        // No need to fetchThreads() or fetchMessages() as we updated optimistically and Realtime will handle others
      } catch (err) {
         console.error("Error sending message:", err);
-        setNewMessageText(text); // restore
+        // Revert optimistic update on failure
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        setNewMessageText(text); // restore text
+        Alert.alert("Error", "Failed to send message. Please try again.");
      }
   };
 
@@ -752,11 +1126,7 @@ export default function SupervisorMessages() {
       if (!dateStr) return '';
       try {
          const date = parseISO(dateStr);
-         const now = new Date();
-         if (date.toDateString() === now.toDateString()) {
-            return format(date, 'HH:mm');
-         }
-         return format(date, 'dd.MM HH:mm');
+         return format(date, 'dd.MM.yyyy HH:mm');
       } catch (e) {
          return '';
       }
@@ -829,20 +1199,20 @@ export default function SupervisorMessages() {
                          data={filteredThreads}
                          keyExtractor={item => item.id}
                          contentContainerStyle={styles.listContent}
-                         renderItem={({ item }) => (
-                            <TouchableOpacity 
-                               style={[styles.threadItem, { backgroundColor: Colors[colorScheme ?? 'light'].background }, selectedThreadId === item.id && !isMobile && styles.threadItemSelected]}
-                               onPress={() => setSelectedThreadId(item.id)}
-                            >
+                                 renderItem={({ item }) => (
+                                    <TouchableOpacity 
+                                       style={[styles.threadItem, { backgroundColor: selectedThreadId === item.id ? '#000000' : 'transparent' }, selectedThreadId === item.id && !isMobile && styles.threadItemSelected]}
+                                       onPress={() => setSelectedThreadId(item.id)}
+                                    >
                                <View style={styles.avatarContainer}>
                                   <View style={[styles.avatar, styles.avatarPlaceholder]}><ThemedText style={styles.avatarInitials}>{getThreadTitle(item).substring(0, 2).toUpperCase()}</ThemedText></View>
                                </View>
                                <View style={styles.threadContent}>
                                   <View style={styles.threadHeader}>
-                                     <ThemedText style={styles.threadTitle} numberOfLines={1}>{getThreadTitle(item)}</ThemedText>
-                                     <ThemedText style={styles.timestamp}>{item.updated_at ? formatDistanceToNow(parseISO(item.updated_at), { addSuffix: true, locale: de }) : ''}</ThemedText>
+                                     <ThemedText style={[styles.threadTitle, selectedThreadId === item.id ? { color: '#fff' } : { color: '#000' }]} numberOfLines={1}>{getThreadTitle(item)}</ThemedText>
+                                     <ThemedText style={[styles.timestamp, selectedThreadId === item.id ? { color: 'rgba(255,255,255,0.7)' } : { color: '#8E8E93' }]}>{item.updated_at ? formatDistanceToNow(parseISO(item.updated_at), { addSuffix: true, locale: de }) : ''}</ThemedText>
                                   </View>
-                                  <ThemedText style={styles.previewText} numberOfLines={2}>{item.last_message?.content || 'Keine Nachrichten'}</ThemedText>
+                                  <ThemedText style={[styles.previewText, selectedThreadId === item.id ? { color: 'rgba(255,255,255,0.7)' } : { color: '#8E8E93' }]} numberOfLines={2}>{item.last_message?.content || 'Keine Nachrichten'}</ThemedText>
                                </View>
                             </TouchableOpacity>
                          )}
@@ -874,7 +1244,7 @@ export default function SupervisorMessages() {
                             <View style={[styles.avatarSmall, styles.avatarPlaceholder]}>
                                 <ThemedText style={styles.avatarInitialsSmall}>{getThreadTitle(selectedThread).substring(0, 2).toUpperCase()}</ThemedText>
                             </View>
-                            <ThemedText type="subtitle" style={{ marginLeft: 10, flex: 1 }} numberOfLines={1}>{getThreadTitle(selectedThread)}</ThemedText>
+                            <ThemedText type="subtitle" style={{ marginLeft: 10, flex: 1, color: '#000000' }} numberOfLines={1}>{getThreadTitle(selectedThread)}</ThemedText>
                         </>
                     ) : (
                         <>
@@ -910,24 +1280,34 @@ export default function SupervisorMessages() {
                                  contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
                                  renderItem={({ item }) => {
                                     const isMe = item.sender_id === userRow?.id;
-                                    const senderName = isMe ? 'Ich' : (item.sender ? `${item.sender.first_name} ${item.sender.family_name}` : 'Unbekannt');
+                                    const senderName = isMe 
+                                       ? (userRow?.first_name && userRow?.family_name ? `${userRow.first_name} ${userRow.family_name}` : 'Ich') 
+                                       : (item.sender ? `${item.sender.first_name} ${item.sender.family_name}` : 'Unbekannt');
                                     const senderRole = item.sender?.user_type || 'child';
    
                                     return (
                                        <View style={[styles.messageBubble, isMe ? styles.messageBubbleMe : styles.messageBubbleOther]}>
-                                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6, opacity: 0.8 }}>
+                                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 }}>
                                             <Text style={{ fontSize: 12, fontWeight: '600', color: isMe ? '#fff' : '#000' }}>{senderName}</Text>
                                             {!isMe && <RoleBadge role={senderRole} />}
                                          </View>
                                          <ThemedText style={isMe ? styles.messageTextMe : styles.messageTextOther}>{item.content}</ThemedText>
                                          {item.attachments && item.attachments.map((att: any, idx: number) => (
                                            att.type === 'image' ? (
-                                             <Image key={idx} source={{ uri: att.url }} style={{ width: 200, height: 200, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
-                                           ) : null
+                                             <TouchableOpacity key={idx} onPress={() => setPreviewImage(att.url)}>
+                                                <Image source={{ uri: att.url }} style={{ width: 200, height: 200, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                                             </TouchableOpacity>
+                                           ) : (
+                                             <TouchableOpacity key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: 'rgba(0,0,0,0.05)', padding: 8, borderRadius: 4 }} onPress={() => handleOpenFile(att.url)}>
+                                                <Ionicons name="document-text" size={20} color={isMe ? "#fff" : "#000"} style={{ marginRight: 8 }} />
+                                                <ThemedText style={{ fontSize: 12, color: isMe ? "#fff" : "#000", textDecorationLine: 'underline' }}>{att.name}</ThemedText>
+                                             </TouchableOpacity>
+                                           )
                                          ))}
                                          {item.poll && (
                                              <View style={styles.pollContainer}>
-                                                <ThemedText style={[styles.pollQuestion, { color: isMe ? '#fff' : '#000' }]}>{item.poll.question}</ThemedText>
+                                                {item.content ? null : <ThemedText style={[styles.pollQuestion, { color: isMe ? '#fff' : '#000' }]}>{item.poll.question}</ThemedText>}
+                                                {item.content ? <ThemedText style={[styles.pollQuestion, { color: isMe ? '#fff' : '#000', marginTop: 8 }]}>{item.poll.question}</ThemedText> : null}
                                                 {item.poll.options.map((opt: any) => {
                                                    const totalVotes = item.poll!.options.reduce((sum: number, o: any) => sum + o.votes, 0);
                                                    const percentage = totalVotes > 0 ? (opt.votes / totalVotes) * 100 : 0;
@@ -950,10 +1330,17 @@ export default function SupervisorMessages() {
                                              </View>
                                           )}
                                          <View style={styles.messageFooter}>
-                                             <Text style={[styles.messageTime, isMe ? { color: 'rgba(255,255,255,0.7)' } : {}]}>{formatMessageTime(item.created_at)}</Text>
-                                             {isMe && (
-                                                <Ionicons name="checkmark-done" size={16} color="rgba(255,255,255,0.7)" style={{ marginLeft: 4 }} />
-                                             )}
+                                             <Text style={[styles.messageTime, isMe ? { color: 'rgba(255,255,255,0.7)' } : {}]}>
+                                                {format(parseISO(item.created_at), 'dd.MM.yyyy HH:mm')}
+                                             </Text>
+                                            {isMe && (
+                                               <View style={{ flexDirection: 'row', marginLeft: 4 }}>
+                                                  <Ionicons name="checkmark" size={16} color={item.readBy && item.readBy.length > 0 ? '#5AC8FA' : '#C7C7CC'} />
+                                                  {(item.readBy && item.readBy.length > 0) && (
+                                                     <Ionicons name="checkmark" size={16} color="#5AC8FA" style={{ marginLeft: -10 }} />
+                                                  )}
+                                               </View>
+                                            )}
                                           </View>
                                        </View>
                                     );
@@ -967,14 +1354,14 @@ export default function SupervisorMessages() {
                     {showPollComposer && (
                        <View style={styles.pollComposer}>
                           <View style={styles.pollComposerHeader}>
-                             <Text style={styles.pollComposerTitle}>Neue Umfrage</Text>
+                             <Text style={styles.pollComposerTitle}>Create poll</Text>
                              <TouchableOpacity onPress={() => setShowPollComposer(false)}>
                                 <Ionicons name="close" size={20} color="#666" />
                              </TouchableOpacity>
                           </View>
                           <TextInput
                              style={styles.pollQuestionInput}
-                             placeholder="Frage stellen..."
+                             placeholder="Question..."
                              value={pollQuestion}
                              onChangeText={setPollQuestion}
                           />
@@ -990,17 +1377,28 @@ export default function SupervisorMessages() {
                                       setPollOptions(newOpts);
                                    }}
                                 />
+                                {pollOptions.length > 2 && (
+                                   <TouchableOpacity 
+                                      style={styles.deleteOptionButton} 
+                                      onPress={() => {
+                                         const newOpts = pollOptions.filter((_, i) => i !== idx);
+                                         setPollOptions(newOpts);
+                                      }}
+                                   >
+                                      <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+                                   </TouchableOpacity>
+                                )}
                              </View>
                           ))}
                           <TouchableOpacity style={styles.addOptionButton} onPress={() => setPollOptions([...pollOptions, ''])}>
-                             <Text style={styles.addOptionText}>+ Option hinzufügen</Text>
+                             <Text style={styles.addOptionText}>+ Add option</Text>
                           </TouchableOpacity>
                           <View style={styles.pollSettings}>
-                             <Text>Mehrfachauswahl erlaubt</Text>
+                             <Text>Multiple</Text>
                              <Switch value={pollMultiple} onValueChange={setPollMultiple} />
                           </View>
                           <TouchableOpacity style={styles.createPollButton} onPress={handleCreatePoll} disabled={uploading}>
-                             <Text style={styles.createPollButtonText}>{uploading ? 'Erstellt...' : 'Umfrage erstellen'}</Text>
+                             <Text style={styles.createPollButtonText}>{uploading ? 'Sending...' : 'Send poll'}</Text>
                           </TouchableOpacity>
                        </View>
                     )}
@@ -1049,13 +1447,13 @@ export default function SupervisorMessages() {
              )}
 
              {!isMobile && showParticipantsOverlay && (
-                 <View style={styles.participantsOverlay}>
-                    <View style={[styles.columnHeader, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
-                       <ThemedText type="subtitle" style={styles.columnTitle}>Participants</ThemedText>
-                       <TouchableOpacity onPress={() => setShowParticipantsOverlay(false)}>
-                          <Ionicons name="close" size={24} color="#000" />
-                       </TouchableOpacity>
-                    </View>
+                  <View style={styles.participantsOverlay}>
+                     <View style={[styles.columnHeader, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+                        <ThemedText type="subtitle" style={[styles.columnTitle, { color: '#000' }]}>Participants</ThemedText>
+                        <TouchableOpacity onPress={() => setShowParticipantsOverlay(false)}>
+                           <Ionicons name="close" size={24} color="#000" />
+                        </TouchableOpacity>
+                     </View>
                     {selectedThread ? (
                        <FlatList 
                           data={selectedThread?.participants || []}
@@ -1067,11 +1465,11 @@ export default function SupervisorMessages() {
                                    <View style={styles.avatar}>
                                       <ThemedText style={styles.avatarInitials}>{item.users?.first_name?.[0]}{item.users?.family_name?.[0]}</ThemedText>
                                    </View>
-                                   <View style={{ flex: 1 }}>
-                                      <ThemedText style={{ fontWeight: '600', fontSize: 14 }}>{item.users?.first_name} {item.users?.family_name}</ThemedText>
-                                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                                         <RoleBadge role={item.users?.user_type || (item.user_id === supervisorId ? 'supervisor' : 'parent')} />
-                                         {item.status === 'accepted' && (
+                               <View style={{ flex: 1 }}>
+                                  <ThemedText style={{ fontWeight: '600', fontSize: 14, color: '#000' }}>{item.users?.first_name} {item.users?.family_name}</ThemedText>
+                                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                                     <RoleBadge role={item.users?.user_type || (item.user_id === supervisorId ? 'supervisor' : 'parent')} />
+                                     {item.status === 'accepted' && (
                                             <View style={{ backgroundColor: '#F4F4F5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 12 }}>
                                                <Text style={{ color: '#52525B', fontSize: 10, fontWeight: '500' }}>ACCEPTED</Text>
                                             </View>
@@ -1178,7 +1576,7 @@ export default function SupervisorMessages() {
           <View style={styles.modalOverlay}>
              <View style={[styles.modalContainer, { maxHeight: 500, maxWidth: 500 }]}>
                 <View style={styles.modalHeader}>
-                   <ThemedText type="subtitle">Participants</ThemedText>
+                   <ThemedText type="subtitle" style={{ color: '#000' }}>Participants</ThemedText>
                    <TouchableOpacity onPress={() => setIsParticipantsModalVisible(false)}><Ionicons name="close" size={24} color="#000" /></TouchableOpacity>
                 </View>
                 <View style={{ padding: 16, flex: 1 }}>
@@ -1192,7 +1590,7 @@ export default function SupervisorMessages() {
                                   <ThemedText style={styles.avatarInitials}>{item.users?.first_name?.[0]}{item.users?.family_name?.[0]}</ThemedText>
                                </View>
                                <View>
-                                  <ThemedText style={{ fontWeight: '600' }}>{item.users?.first_name} {item.users?.family_name}</ThemedText>
+                                  <ThemedText style={{ fontWeight: '600', color: '#000' }}>{item.users?.first_name} {item.users?.family_name}</ThemedText>
                                   <RoleBadge role={item.users?.user_type || (item.user_id === supervisorId ? 'supervisor' : 'parent')} />
                                </View>
                             </View>
@@ -1204,6 +1602,18 @@ export default function SupervisorMessages() {
              </View>
           </View>
        </Modal>
+       
+       {/* Image Preview Modal */}
+       <Modal visible={!!previewImage} transparent={true} animationType="fade" onRequestClose={() => setPreviewImage(null)}>
+         <View style={styles.imagePreviewOverlay}>
+           <TouchableOpacity style={styles.closePreviewButton} onPress={() => setPreviewImage(null)}>
+             <Ionicons name="close" size={30} color="#fff" />
+           </TouchableOpacity>
+           {previewImage && (
+             <Image source={{ uri: previewImage }} style={styles.fullImage} resizeMode="contain" />
+           )}
+         </View>
+       </Modal>
     </ThemedView>
   );
 }
@@ -1212,14 +1622,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   mainRow: { flex: 1, flexDirection: 'row' },
-  leftColumn: { backgroundColor: '#fff', borderRightWidth: 1, borderRightColor: '#E5E5EA', display: 'flex', flexDirection: 'column' },
+  leftColumn: { backgroundColor: '#F2F2F7', borderRightWidth: 1, borderRightColor: '#E5E5EA', display: 'flex', flexDirection: 'column' },
   middleColumn: { flex: 1, backgroundColor: '#fff', margin: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E5E5EA', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   rightColumn: { width: '25%', backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: '#E5E5EA', display: 'flex', flexDirection: 'column' },
   header: {
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F2F2F7',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5EA',
   },
@@ -1233,15 +1643,15 @@ const styles = StyleSheet.create({
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 16, marginBottom: 12, paddingHorizontal: 12, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#E5E5EA', marginTop: 12 },
   searchInput: { flex: 1, height: 36, fontSize: 14, color: '#000' },
   filterRow: { marginBottom: 8, height: 32 },
-  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#F2F2F7', marginRight: 8, borderWidth: 1, borderColor: '#E5E5EA' },
-  filterChipActive: { backgroundColor: '#E5E5EA', borderColor: '#ccc' },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#fff', marginRight: 8, borderWidth: 1, borderColor: '#E5E5EA', justifyContent: 'center', alignItems: 'center' },
+  filterChipActive: { backgroundColor: '#000', borderColor: '#000' },
   filterChipText: { fontSize: 12, color: '#666' },
-  filterChipTextActive: { color: '#000', fontWeight: '600' },
+  filterChipTextActive: { color: '#fff', fontWeight: '600' },
   listContent: { padding: 0 },
   emptyState: { padding: 20, alignItems: 'center' },
   emptyStateText: { color: '#999', fontSize: 14 },
-  threadItem: { flexDirection: 'row', padding: 12, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F2F2F7', alignItems: 'center' },
-  threadItemSelected: { backgroundColor: '#F2F2F7' },
+  threadItem: { flexDirection: 'row', padding: 12, backgroundColor: 'transparent', borderBottomWidth: 1, borderBottomColor: '#E5E5EA', alignItems: 'center' },
+  threadItemSelected: { backgroundColor: '#000000' },
   avatarContainer: { marginRight: 12 },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#E1E1E1', justifyContent: 'center', alignItems: 'center' },
   avatarSmall: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#E1E1E1', justifyContent: 'center', alignItems: 'center' },
@@ -1286,8 +1696,9 @@ const styles = StyleSheet.create({
   pollComposerHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
   pollComposerTitle: { fontWeight: 'bold', fontSize: 16 },
   pollQuestionInput: { backgroundColor: '#fff', padding: 10, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#ddd' },
-  pollOptionInputRow: { marginBottom: 8 },
-  pollOptionInput: { backgroundColor: '#fff', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ddd' },
+  pollOptionInputRow: { marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pollOptionInput: { flex: 1, backgroundColor: '#fff', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ddd' },
+  deleteOptionButton: { padding: 4 },
   addOptionButton: { padding: 8 },
   addOptionText: { color: '#007AFF' },
   pollSettings: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 10 },
@@ -1339,6 +1750,23 @@ const styles = StyleSheet.create({
     zIndex: 100,
     display: 'flex',
     flexDirection: 'column',
+  },
+  imagePreviewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  closePreviewButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 10,
+    padding: 10,
   },
 });
 
