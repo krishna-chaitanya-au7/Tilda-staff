@@ -320,10 +320,10 @@ export default function SupervisorGroupingScreen() {
          .eq('is_deleted', false);
       setSupervisorGroups(groups || []);
 
-      // 4. Fetch Children Info with Users
+      // 4. Fetch Children Info with Users (Optimized Select)
       const { data: infos, error: fetchError } = await supabase
          .from('children_info')
-         .select(`*, users:users!inner(*)`)
+         .select(`*, users:users!inner(id, first_name, family_name, status, manager_id)`)
          .eq('facility_id', targetFacId)
          .eq('academic_year', targetYearId)
          .eq('users.user_type', 'child')

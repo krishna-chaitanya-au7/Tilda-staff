@@ -345,7 +345,7 @@ export default function MahlzeitenTab({ userId, facilityId, from }: MahlzeitenTa
                </View>
 
                <ScrollView style={styles.modalBody}>
-                  {/* Action Row */}
+                  {/* Action Row - Hidden for now
                   <View style={{ alignItems: 'flex-end', marginBottom: 16 }}>
                      <TouchableOpacity 
                         style={[styles.actionBtn, selectedMeal?.is_skipped ? styles.btnSuccess : styles.btnDanger]}
@@ -356,6 +356,7 @@ export default function MahlzeitenTab({ userId, facilityId, from }: MahlzeitenTa
                         </Text>
                      </TouchableOpacity>
                   </View>
+                  */}
 
                   {modalLoading ? (
                      <ActivityIndicator size="large" color="#007AFF" />
@@ -365,6 +366,7 @@ export default function MahlzeitenTab({ userId, facilityId, from }: MahlzeitenTa
                            const isSelected = selectedMeal?.menuline_id === menu.menuline_id && !selectedMeal?.is_skipped;
                            return (
                               <View key={menu.id} style={[styles.menuCard, isSelected && styles.menuCardSelected]}>
+                                 {/* Select Button - Hidden for now
                                  <TouchableOpacity 
                                     style={[styles.selectBtn, isSelected && styles.selectBtnSelected]}
                                     disabled={isSelected}
@@ -374,6 +376,7 @@ export default function MahlzeitenTab({ userId, facilityId, from }: MahlzeitenTa
                                        {isSelected ? "Selected" : "Select"}
                                     </Text>
                                  </TouchableOpacity>
+                                 */}
                                  
                                  <View style={styles.menuSection}>
                                     <Text style={styles.menuLabel}>Starter</Text>

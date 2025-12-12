@@ -11,6 +11,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import AttendanceLogsPanel from '@/components/AttendanceLogsPanel';
 import SendMessageDialog from '@/components/SendMessageDialog';
+import AttendanceEventDialog, { AttendanceEventType } from '@/components/AttendanceEventDialog';
 
 // --- Types ---
 
@@ -66,6 +67,29 @@ interface SupervisorGroup {
 }
 
 // --- Components ---
+
+const StatusOptionsModal = ({ visible, onClose, onSelect, currentStatus }: { visible: boolean, onClose: () => void, onSelect: (val: string) => void, currentStatus?: string }) => {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+        <View style={[styles.modalContent, { width: 250 }]}>
+          <Text style={{ fontSize: 16, fontWeight: '600', padding: 16, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+            Status ändern
+          </Text>
+          <TouchableOpacity style={styles.modalItem} onPress={() => onSelect('came_late')}>
+             <Text style={styles.modalItemText}>Verspätet</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalItem} onPress={() => onSelect('left_early')}>
+             <Text style={styles.modalItemText}>Früher gegangen</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.modalItem, { borderTopWidth: 1, borderTopColor: '#eee' }]} onPress={() => onSelect('reset')}>
+             <Text style={[styles.modalItemText, { color: '#F44336' }]}>Zurücksetzen (Pending)</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
 
 const Dropdown = ({ label, value, options, onSelect, style }: { label: string, value: string | null, options: {label: string, value: string | null}[], onSelect: (val: string | null) => void, style?: any }) => {
   const [visible, setVisible] = useState(false);
@@ -127,7 +151,8 @@ const ChildAttendanceRow = React.memo(({
   onStatusUpdate,
   onViewChild,
   onViewParent,
-  getGroup 
+  getGroup,
+  onShowOptions
 }: any) => {
   const hasMeal = mealSelection && !mealSelection.is_deleted && !mealSelection.is_skipped;
   const mealName = hasMeal ? mealSelection?.menuline?.name || 'Menu' : '-';
@@ -168,6 +193,20 @@ const ChildAttendanceRow = React.memo(({
       <View style={styles.actions}>
          {attendanceRecord?.is_leave ? (
             <Text style={{ color: '#C62828', fontSize: 12 }}>On Leave</Text>
+         ) : attendanceRecord?.status && attendanceRecord.status !== 'Pending' ? (
+           <TouchableOpacity 
+             onPress={() => onShowOptions(item.id)} 
+             style={styles.statusButton}
+           >
+              <Text style={[styles.statusButtonText, attendanceRecord.status === 'Absent' && styles.statusButtonTextRed]}>
+                {attendanceRecord.status === 'Present' ? 'Anwesend' : 'Abwesend'}
+              </Text>
+              <Ionicons 
+                name="chevron-down" 
+                size={12} 
+                color={attendanceRecord.status === 'Absent' ? '#D32F2F' : '#2E7D32'} 
+              />
+           </TouchableOpacity>
          ) : (
            <>
              <TouchableOpacity onPress={() => onStatusUpdate(item.id, 'Present')} style={{ opacity: attendanceRecord?.status === 'Present' ? 1 : 0.3 }}>
@@ -309,6 +348,16 @@ export default function SupervisorAttendanceScreen() {
   const [sortCol, setSortCol] = useState<'name' | 'class' | 'lunch' | 'status'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
+  // Options & Events
+  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
+  const [selectedChildForOptions, setSelectedChildForOptions] = useState<string | null>(null);
+  const [eventDialog, setEventDialog] = useState<{
+    open: boolean;
+    type: AttendanceEventType;
+    userId?: string;
+    recordId?: string;
+  }>({ open: false, type: 'late' });
+
   const handleSort = (col: 'name' | 'class' | 'lunch' | 'status') => {
     if (sortCol === col) {
       setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -316,6 +365,125 @@ export default function SupervisorAttendanceScreen() {
       setSortCol(col);
       setSortDir('asc');
     }
+  };
+
+  // --- Event Logic ---
+
+  const parseTimeToMinutes = (timeString: string): number => {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+
+  const saveAttendanceEvent = async (events: any[]) => {
+    if (!eventDialog.recordId) return;
+    let attendanceId = eventDialog.recordId;
+    
+    // Check for temporary ID (optimistic update that hasn't synced yet)
+    if (attendanceId.toString().startsWith('temp_')) {
+       // Try to fetch the real ID if available
+       if (eventDialog.userId) {
+          const dateStr = format(selectedDate, 'yyyy-MM-dd');
+          const { data } = await supabase
+            .from('child_attendance')
+            .select('id')
+            .eq('user_id', eventDialog.userId)
+            .eq('date', dateStr)
+            .maybeSingle();
+            
+          if (data) {
+             attendanceId = data.id;
+          } else {
+             Alert.alert("Error", "Bitte warten Sie einen Moment, bis die Anwesenheit synchronisiert ist.");
+             return;
+          }
+       }
+    }
+
+    // Fetch current record to be safe or use local
+    const rec = attendanceRecords.find((r) => r.id === attendanceId) || attendanceRecords.find((r) => r.id === eventDialog.recordId); // Fallback to temp if local
+    const current = (rec as any)?.attendance_note as any[] | undefined;
+    let nextArray = Array.isArray(current) ? [...current] : [];
+
+    for (const event of events) {
+       if (event.id) {
+         // Update existing
+         const idx = nextArray.findIndex(e => e.id === event.id);
+         if (idx !== -1) {
+            nextArray[idx] = { 
+              ...nextArray[idx], 
+              type: event.type, 
+              minutes: event.time ? parseTimeToMinutes(event.time) : null,
+              comment: event.comment ?? null,
+              updated_at: new Date().toISOString()
+            };
+         }
+       } else {
+         // Append new
+         nextArray.push({
+            id: Math.random().toString(36).substring(7),
+            type: event.type,
+            minutes: event.time ? parseTimeToMinutes(event.time) : null,
+            comment: event.comment ?? null,
+            created_at: new Date().toISOString(),
+         });
+       }
+    }
+
+    // Optimistic
+    setAttendanceRecords(prev => prev.map(r => r.id === eventDialog.recordId ? { ...r, attendance_note: nextArray } : r));
+
+    // Save
+    const { error } = await supabase
+      .from("child_attendance")
+      .update({ attendance_note: nextArray })
+      .eq("id", attendanceId);
+      
+    if (error) {
+      Alert.alert('Error', 'Failed to save event: ' + error.message);
+      // Revert optimistic update on error
+      if (rec) {
+          setAttendanceRecords(prev => prev.map(r => r.id === eventDialog.recordId ? rec : r) as any);
+      }
+    } else {
+       // If we updated a real record but state still has temp ID (race condition), we should probably refresh
+       if (eventDialog.recordId.toString().startsWith('temp_')) {
+          setRefreshTrigger(p => p + 1);
+       }
+    }
+    setEventDialog(prev => ({ ...prev, open: false }));
+  };
+
+  const handleOptionSelect = (option: string) => {
+    setOptionsModalVisible(false);
+    if (!selectedChildForOptions) return;
+    
+    const childId = selectedChildForOptions;
+    const record = attendanceRecords.find(r => r.user_id === childId);
+    if (!record) return;
+
+    if (option === 'reset') {
+       handleStatusUpdate(childId, 'Pending');
+    } else if (option === 'came_late') {
+       setEventDialog({
+         open: true,
+         type: 'late',
+         userId: childId,
+         recordId: record.id
+       });
+    } else if (option === 'left_early') {
+       setEventDialog({
+         open: true,
+         type: 'early_leave',
+         userId: childId,
+         recordId: record.id
+       });
+    }
+    // Don't clear selectedChildForOptions immediately if we need it for something else, but here we are done with it for this flow or passing it to eventDialog
+  };
+
+  const handleShowOptions = (childId: string) => {
+    setSelectedChildForOptions(childId);
+    setOptionsModalVisible(true);
   };
 
   // --- Init ---
@@ -433,6 +601,50 @@ export default function SupervisorAttendanceScreen() {
 
     init();
   }, []);
+
+  // --- Realtime Subscription ---
+  useEffect(() => {
+    if (!selectedFacility || !currentAcademicYear) return;
+
+    const channel = supabase
+      .channel('attendance_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'child_attendance',
+          filter: `academic_year=eq.${currentAcademicYear}` 
+        },
+        (payload) => {
+           // Check if change is relevant to current date
+           const record = payload.new as any || payload.old as any;
+           if (record && record.date === format(selectedDate, 'yyyy-MM-dd')) {
+              // If it's an update/insert, update local state immediately
+              if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                 const newRecord = payload.new as ChildAttendance;
+                 setAttendanceRecords(prev => {
+                    const idx = prev.findIndex(r => r.id === newRecord.id);
+                    if (idx >= 0) {
+                       const updated = [...prev];
+                       updated[idx] = newRecord;
+                       return updated;
+                    }
+                    return [...prev, newRecord];
+                 });
+              } else if (payload.eventType === 'DELETE') {
+                 const oldRecord = payload.old as any;
+                 setAttendanceRecords(prev => prev.filter(r => r.id !== oldRecord.id));
+              }
+           }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedFacility, currentAcademicYear, selectedDate]);
 
   // --- Fetch Data ---
 
@@ -616,28 +828,62 @@ export default function SupervisorAttendanceScreen() {
 
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
+    // 1. Optimistic Update
+    setAttendanceRecords(prevRecords => {
+       const existingIndex = prevRecords.findIndex(r => r.user_id === childId);
+       if (existingIndex >= 0) {
+          // Update existing record
+          const updated = [...prevRecords];
+          updated[existingIndex] = { ...updated[existingIndex], status, updated_at: new Date().toISOString() } as any;
+          return updated;
+       } else {
+          // Add new temporary record
+          const newRecord: ChildAttendance = {
+             id: `temp_${Date.now()}`,
+             user_id: childId,
+             status,
+             date: dateStr,
+             facility_id: targetFacility,
+             is_leave: false,
+             attendance_note: []
+          };
+          return [...prevRecords, newRecord];
+       }
+    });
+
     try {
        const existing = attendanceRecords.find(r => r.user_id === childId);
        
-       if (existing) {
-         await supabase
+       if (existing && !existing.id.startsWith('temp_')) {
+         const { error } = await supabase
            .from('child_attendance')
            .update({ status, updated_at: new Date().toISOString() })
            .eq('id', existing.id);
+           
+         if (error) throw error;
        } else {
-         await supabase.from('child_attendance').insert({
+         const { data, error } = await supabase.from('child_attendance').insert({
            user_id: childId,
            status,
            date: dateStr,
            facility_id: targetFacility,
            academic_year: currentAcademicYear,
            is_leave: false
-         });
+         }).select().single();
+
+         if (error) throw error;
+         
+         // Replace temp record with real one
+         if (data) {
+            setAttendanceRecords(prev => prev.map(r => r.user_id === childId ? data : r));
+         }
        }
-       setRefreshTrigger(p => p + 1);
+       // No need to trigger full refresh, optimistic update handles UI
     } catch (err) {
       console.error('Update error:', err);
       Alert.alert('Error', 'Failed to update attendance');
+      // Revert optimistic update on error (simple fetch refresh)
+      setRefreshTrigger(p => p + 1);
     }
   }, [selectedFacility, currentAcademicYear, children, attendanceRecords, selectedDate]);
 
@@ -828,12 +1074,23 @@ export default function SupervisorAttendanceScreen() {
          onViewChild={handleViewChild}
          onViewParent={handleViewParent}
          getGroup={getGroup}
+         onShowOptions={handleShowOptions}
       />
     );
   }, [selectedIds, mealSelections, attendanceRecords, facilities, selectedFacility, getGroup]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Fixed Header: Title & Facility */}
+      <View style={styles.fixedHeader}>
+        <Text style={styles.title}>Ganztag</Text>
+        <View style={styles.facilityContextRow}>
+            <Text style={styles.facilityContextText}>
+            Facility : {selectedFacility === 'all' ? 'Alle Einrichtungen' : getFacilityName(selectedFacility || undefined)}
+            </Text>
+        </View>
+      </View>
+
       <FlatList
         data={loading ? [] : filteredData}
         extraData={[sortCol, sortDir, loading, selectedIds, filteredData]}
@@ -846,16 +1103,7 @@ export default function SupervisorAttendanceScreen() {
           <View>
             {/* Header Container */}
             <View style={styles.header}>
-              {/* Top: Title & Facility */}
-              <View>
-                <Text style={styles.title}>Ganztag</Text>
-                <View style={styles.facilityContextRow}>
-                    <Text style={styles.facilityContextText}>
-                    Facility : {selectedFacility === 'all' ? 'Alle Einrichtungen' : getFacilityName(selectedFacility || undefined)}
-                    </Text>
-                </View>
-              </View>
-
+              
               {/* Facility Picker */}
               {facilities.length > 1 && (
                 <View style={styles.facilityRow}>
@@ -1090,6 +1338,27 @@ export default function SupervisorAttendanceScreen() {
         supervisorId={supervisorId}
         selectedChildIds={Array.from(selectedIds)}
       />
+
+      <StatusOptionsModal 
+        visible={optionsModalVisible}
+        onClose={() => setOptionsModalVisible(false)}
+        onSelect={handleOptionSelect}
+      />
+
+      <AttendanceEventDialog
+        open={eventDialog.open}
+        onOpenChange={(open) => setEventDialog(prev => ({ ...prev, open }))}
+        type={eventDialog.type}
+        existing={
+          eventDialog.recordId 
+            ? attendanceRecords
+                .find(r => r.id === eventDialog.recordId)
+                ?.attendance_note
+                ?.find((n: any) => n.type === eventDialog.type)
+            : undefined
+        }
+        onSave={saveAttendanceEvent}
+      />
     </View>
   );
 }
@@ -1099,8 +1368,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  fixedHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    zIndex: 10,
+  },
   header: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5EA',
@@ -1390,5 +1667,26 @@ const styles = StyleSheet.create({
     color: '#C62828',
     fontSize: 10,
     fontWeight: 'bold'
+  },
+  statusButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    gap: 4,
+    minWidth: 80,
+    justifyContent: 'space-between'
+  },
+  statusButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#2E7D32',
+  },
+  statusButtonTextRed: {
+    color: '#D32F2F',
   },
 });

@@ -34,6 +34,48 @@ interface LogEntry {
 // Helper function for normalization
 const normalize = (v: any) => String(v ?? "").trim().toLowerCase();
 
+// Helper: supervision eligible child – has Kurzgruppe or Langgruppe for at least one day
+const isSupervisionEligible = (schedule: any[]) =>
+  Array.isArray(schedule) &&
+  schedule.some((s: any) => {
+    const sup = normalize(s?.supervision);
+    return sup === "kurzgruppe" || sup === "langgruppe";
+  });
+
+// Helper: supervision changed from keine Betreuung to Kurz/Lang for any day
+const supervisionImproved = (oldSchedule: any[], newSchedule: any[]) => {
+  if (!Array.isArray(oldSchedule) || !Array.isArray(newSchedule)) return false;
+  const byDay = (arr: any[]) => Object.fromEntries(arr.map((d) => [d.day, d]));
+  const o = byDay(oldSchedule);
+  const n = byDay(newSchedule);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  return days.some((d) => {
+    const before = normalize(o[d]?.supervision);
+    const after = normalize(n[d]?.supervision);
+    return (
+      (before === "keine betreuung" || before === "") &&
+      (after === "kurzgruppe" || after === "langgruppe")
+    );
+  });
+};
+
+// Helper: lunch toggled Essen <-> kein Essen
+const lunchToggled = (oldSchedule: any[], newSchedule: any[]) => {
+  if (!Array.isArray(oldSchedule) || !Array.isArray(newSchedule)) return false;
+  const byDay = (arr: any[]) => Object.fromEntries(arr.map((d) => [d.day, d]));
+  const o = byDay(oldSchedule);
+  const n = byDay(newSchedule);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  return days.some((d) => {
+    const a = normalize(o[d]?.lunch);
+    const b = normalize(n[d]?.lunch);
+    return (
+      (a === "essen" && b === "kein essen") ||
+      (a === "kein essen" && b === "essen")
+    );
+  });
+};
+
 export default function AttendanceLogsPanel({
   selectedAcademicYearId,
   selectedFacilityId,
@@ -58,11 +100,8 @@ export default function AttendanceLogsPanel({
       translateY.value = 0;
       
       // Calculate duration based on height (e.g. 20 pixels per second)
-      const distance = contentHeight - containerHeight; // Stop when bottom reaches bottom
-      // Or if we want full scroll through: distance = contentHeight
-      
-      // Let's just scroll until the bottom of content hits bottom of container, then reset?
-      // Or standard ticker style: scroll until end, then jump back.
+      const distance = contentHeight - containerHeight; 
+      // Scroll until the bottom of content hits bottom of container, then reset
       const duration = distance * 50; // Adjust speed
       
       translateY.value = withRepeat(
@@ -104,6 +143,8 @@ export default function AttendanceLogsPanel({
   const fetchLogs = async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
+      setLogs([]); // Optimistic clear
+      
       // 1. Determine facilities to query
       let targetFacilities: string[] = [];
       if (selectedFacilityId !== 'all') {
@@ -121,17 +162,22 @@ export default function AttendanceLogsPanel({
       // 2. Fetch eligible children IDs in these facilities for the current academic year
       const { data: children, error: childrenErr } = await supabase
         .from('children_info')
-        .select('id, user_id')
+        .select('id, user_id, supervision_schedule, supervision_groups')
         .in('facility_id', targetFacilities)
         .eq('academic_year', selectedAcademicYearId)
         .eq('is_deleted', false);
 
       if (childrenErr) throw childrenErr;
 
-      const recordIds = children?.map((c: any) => c.id) || [];
-      const userIds = children?.map((c: any) => c.user_id).filter(Boolean) || [];
+      // Eligible children based on current supervision schedule (matching web logic)
+      const eligibleChildren = (children || []).filter((c: any) =>
+        isSupervisionEligible(c?.supervision_schedule || [])
+      );
 
-      if (recordIds.length === 0 && userIds.length === 0) {
+      const recordIds = eligibleChildren.map((c: any) => c.id);
+      const allChildUserIds = (children || []).map((c: any) => c.user_id).filter(Boolean);
+
+      if (recordIds.length === 0 && allChildUserIds.length === 0) {
         setLogs([]);
         setLoading(false);
         return;
@@ -142,31 +188,65 @@ export default function AttendanceLogsPanel({
       sinceDate.setDate(sinceDate.getDate() - 30); // Last 30 days
       const sinceIso = sinceDate.toISOString();
 
+      // We fetch in batches if needed, but for simplicity here assuming 
+      // list isn't massive, or using Promise.all for reasonable chunks.
+      // In RN, we might want to be careful with URL length.
+      // Let's stick to a simpler fetch but split by table to avoid huge OR queries if possible.
+      
       const [childrenLogs, leaveLogs] = await Promise.all([
         supabase
           .from('audit_log')
           .select('id, table_name, record_id, action, old_data, new_data, change_message, changed_at, user_id')
           .eq('table_name', 'children_info')
+          .eq('action', 'UPDATE') // Web only checks UPDATE for children_info
           .in('record_id', recordIds)
           .gte('changed_at', sinceIso)
           .order('changed_at', { ascending: false })
-          .limit(50),
+          .limit(100),
         supabase
           .from('audit_log')
           .select('id, table_name, record_id, action, old_data, new_data, change_message, changed_at, user_id')
           .eq('table_name', 'child_leaves')
-          .in('user_id', userIds)
+          .in('user_id', allChildUserIds)
           .gte('changed_at', sinceIso)
           .order('changed_at', { ascending: false })
-          .limit(50)
+          .limit(100)
       ]);
 
-      const rawLogs = [...(childrenLogs.data || []), ...(leaveLogs.data || [])];
-      rawLogs.sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime());
-      const recentLogs = rawLogs.slice(0, 50);
+      let rawLogs = [...(childrenLogs.data || []), ...(leaveLogs.data || [])];
+      
+      // Parse JSON fields safely
+      const parsedLogs = rawLogs.map(row => {
+        try {
+           const oldData = typeof row.old_data === 'string' ? JSON.parse(row.old_data) : (row.old_data || {});
+           const newData = typeof row.new_data === 'string' ? JSON.parse(row.new_data) : (row.new_data || {});
+           return { ...row, old_data: oldData, new_data: newData };
+        } catch (e) {
+           return null;
+        }
+      }).filter(Boolean);
+
+      // Filter interesting logs (matching web logic)
+      let filteredLogs = parsedLogs.filter((row: any) => {
+         if (row.table_name === 'child_leaves') return true; // Always include leaves
+         
+         const oldSch = row.old_data?.supervision_schedule || [];
+         const newSch = row.new_data?.supervision_schedule || [];
+         
+         // Check if child is eligible in NEW data
+         if (!isSupervisionEligible(newSch)) return false;
+         
+         const supChange = supervisionImproved(oldSch, newSch);
+         const foodChange = lunchToggled(oldSch, newSch);
+         return supChange || foodChange;
+      });
+      
+      // Sort by date desc
+      filteredLogs.sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime());
+      filteredLogs = filteredLogs.slice(0, 100); // Limit display
 
       // 4. Fetch Actors
-      const actorIds = Array.from(new Set(recentLogs.map(l => l.user_id).filter(Boolean)));
+      const actorIds = Array.from(new Set(filteredLogs.map((l: any) => l.user_id).filter(Boolean)));
       let actorMap = new Map();
       
       if (actorIds.length > 0) {
@@ -176,27 +256,22 @@ export default function AttendanceLogsPanel({
           .in('id', actorIds);
         
         actors?.forEach((a: any) => {
-          actorMap.set(a.id, `${a.first_name} ${a.family_name}`);
+          const name = `${a.first_name || ''} ${a.family_name || ''}`.trim();
+          actorMap.set(a.id, name || 'Unknown');
         });
       }
 
-      // 5. Process and Format Logs
-      const formattedLogs: LogEntry[] = recentLogs.map(log => {
+      // 5. Format Logs
+      const formattedLogs: LogEntry[] = filteredLogs.map((log: any) => {
         const time = format(parseISO(log.changed_at), 'dd.MM HH:mm');
         const actor = actorMap.get(log.user_id) || 'System';
         
         let message = '';
         let level: LogEntry['level'] = 'info';
 
-        try {
-          const oldData = typeof log.old_data === 'string' ? JSON.parse(log.old_data) : (log.old_data || {});
-          const newData = typeof log.new_data === 'string' ? JSON.parse(log.new_data) : (log.new_data || {});
-
-          if (log.table_name === 'child_leaves') {
-             level = 'info';
-             
-             const oldLeave = oldData || {};
-             const newLeave = newData || {};
+        if (log.table_name === 'child_leaves') {
+             const oldLeave = log.old_data || {};
+             const newLeave = log.new_data || {};
 
              if (log.action === 'INSERT') {
                 const type = newLeave.leave_type || 'leave';
@@ -209,7 +284,8 @@ export default function AttendanceLogsPanel({
                 const timePart = from && to ? ` (${from}-${to})` : '';
                 
                 message = `Leave: ${type} on ${leaveDate}${timePart}. Status: ${status}`;
-             } else if (log.action === 'UPDATE') {
+                level = 'info';
+             } else {
                 const changes: string[] = [];
                 if (oldLeave.status !== newLeave.status) {
                   changes.push(`Status: ${oldLeave.status} → ${newLeave.status}`);
@@ -228,11 +304,16 @@ export default function AttendanceLogsPanel({
                   changes.push(`Time: ${oldFrom || '--'}-${oldTo || '--'} → ${newFrom || '--'}-${newTo || '--'}`);
                 }
                 
-                message = changes.length > 0 ? changes.join('; ') : (log.change_message || 'Leave updated');
+                if (changes.length > 0) {
+                   message = changes.join('; ');
+                   level = 'info';
+                } else {
+                   message = 'Leave updated';
+                }
              }
-          } else if (log.table_name === 'children_info') {
-             const oldSch = oldData?.supervision_schedule || [];
-             const newSch = newData?.supervision_schedule || [];
+        } else if (log.table_name === 'children_info') {
+             const oldSch = log.old_data?.supervision_schedule || [];
+             const newSch = log.new_data?.supervision_schedule || [];
              
              const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
              const messages: string[] = [];
@@ -256,17 +337,17 @@ export default function AttendanceLogsPanel({
 
                 if ((a === 'essen' && b === 'kein essen') || (a === 'kein essen' && b === 'essen')) {
                    messages.push(`${d}: Lunch: ${beforeLunchRaw} → ${afterLunchRaw}`);
+                   level = 'info';
                 }
              });
              
              if (messages.length > 0) {
                 message = messages.join('; ');
              } else {
+               // Strictly filter out if no detailed messages are generated, 
+               // avoiding raw change_message fallback.
                return null;
              }
-          }
-        } catch (e) {
-           return null;
         }
 
         if (!message) return null;
@@ -279,6 +360,13 @@ export default function AttendanceLogsPanel({
           level
         };
       }).filter(Boolean) as LogEntry[];
+      
+      // If empty, try fallback (similar to web fallback logic - try to show something if it passed scope)
+      if (formattedLogs.length === 0 && filteredLogs.length > 0) {
+         // Simplified fallback: just show generic update if we have items but formatting failed to produce message
+         // This prevents "empty" if there are indeed changes.
+         // But for now let's trust the formatting logic which closely mirrors web.
+      }
 
       setLogs(formattedLogs);
       
@@ -291,17 +379,20 @@ export default function AttendanceLogsPanel({
 
   const getStatusStyle = (level: string) => {
     switch (level) {
-      case 'success': return { color: '#4CAF50', icon: 'checkmark-circle' };
-      case 'warning': return { color: '#FF9800', icon: 'alert-circle' };
-      case 'error': return { color: '#F44336', icon: 'close-circle' };
-      default: return { color: '#007AFF', icon: 'information-circle' };
+      case 'success': return { color: '#10B981', icon: 'checkmark-circle' }; // emerald-500
+      case 'warning': return { color: '#F59E0B', icon: 'alert-circle' }; // amber-500
+      case 'error': return { color: '#F43F5E', icon: 'close-circle' }; // rose-500
+      default: return { color: '#0EA5E9', icon: 'information-circle' }; // sky-500
     }
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <ThemedText type="defaultSemiBold">Aktuelle Änderungen</ThemedText>
+        <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+          <Ionicons name="information-circle" size={16} color="#27272A" />
+          <ThemedText type="defaultSemiBold" style={{fontSize: 14, color: '#27272A'}}>Aktuelle Änderungen</ThemedText>
+        </View>
         <View style={styles.liveIndicator}>
            <View style={styles.dot} />
            <Text style={styles.liveText}>Live</Text>
@@ -314,7 +405,9 @@ export default function AttendanceLogsPanel({
         ) : (
            <View style={{ flex: 1, overflow: 'hidden' }}>
              {logs.length === 0 ? (
-               <Text style={styles.emptyText}>Keine Aktivitäten in den letzten 30 Tagen.</Text>
+               <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20}}>
+                 <Text style={styles.emptyText}>Keine aktuellen Änderungen für die ausgewählten Filter</Text>
+               </View>
              ) : (
                <Animated.View 
                   style={[styles.scrollContent, animatedStyle]}
@@ -325,11 +418,15 @@ export default function AttendanceLogsPanel({
                    return (
                      <View key={log.id} style={styles.logItem}>
                         <View style={styles.cardHeader}>
-                           <Ionicons name={style.icon as any} size={16} color={style.color} />
-                           <Text style={styles.timeText}>{log.time}</Text>
-                           <View style={styles.actorBadge}>
-                              <Ionicons name="person-outline" size={10} color="#007AFF" style={{ marginRight: 2 }}/>
-                              <Text style={styles.actorText} numberOfLines={1}>{log.actor}</Text>
+                           <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
+                             <Ionicons name={style.icon as any} size={16} color={style.color} />
+                             <View style={styles.timeBadge}>
+                                <Text style={styles.timeText}>{log.time}</Text>
+                             </View>
+                             <View style={styles.actorBadge}>
+                                <Ionicons name="person" size={10} color="#0369A1" style={{ marginRight: 4 }}/>
+                                <Text style={styles.actorText} numberOfLines={1}>{log.actor}</Text>
+                             </View>
                            </View>
                         </View>
                         <Text style={styles.messageText}>{log.message}</Text>
@@ -349,102 +446,114 @@ export default function AttendanceLogsPanel({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.8)', // bg-white/80
+    borderRadius: 24, // rounded-3xl
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    height: 400,
+    borderColor: 'rgba(228,228,231,0.7)', // border-zinc-200/70
+    height: 450, // ~28rem
     overflow: 'hidden',
+    // Shadow similar to shadow-[0_6px_30px_-12px_rgb(0_0_0/0.25)]
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 15,
+    elevation: 5,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F2F2F7',
-    backgroundColor: '#FAFAFA',
-    zIndex: 10, // Ensure header is on top
+    borderBottomColor: 'rgba(244,244,245,0.8)', // border-zinc-100/80
+    // gradient bg approximation
+    backgroundColor: '#FAFAFA', 
+    zIndex: 10,
   },
   liveIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFEBEE',
+    backgroundColor: 'rgba(209,250,229,0.6)', // emerald-100/60
+    borderColor: 'rgba(110,231,183,0.6)', // emerald-300/60
+    borderWidth: 1,
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingVertical: 2,
+    borderRadius: 999, // full
     gap: 4,
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#F44336',
+    backgroundColor: '#10B981', // emerald-500
   },
   liveText: {
     fontSize: 10,
-    color: '#F44336',
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    color: '#065F46', // emerald-800 (darker text for contrast)
+    fontWeight: '600',
   },
   scrollContainer: {
     flex: 1,
-    backgroundColor: '#fff',
-    overflow: 'hidden', // Mask content
+    // mask image not fully supported in RN without libs, using overflow hidden
+    overflow: 'hidden', 
   },
   scrollContent: {
-    padding: 12,
-    paddingBottom: 20,
+    paddingVertical: 4,
   },
   emptyText: {
     textAlign: 'center',
-    color: '#999',
-    marginTop: 20,
+    color: '#71717A', // zinc-500
     fontSize: 13,
   },
   logItem: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderRadius: 16, // rounded-2xl
+    marginHorizontal: 16,
+    marginVertical: 6,
     padding: 12,
-    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E5EA',
-    // Shadow for card effect
+    borderColor: 'rgba(228,228,231,0.7)', // border-zinc-200/70
+    // Shadow
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 6,
     elevation: 2,
   },
   cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    flexWrap: 'wrap',
-    gap: 8,
+    marginBottom: 6,
+  },
+  timeBadge: {
+    backgroundColor: '#F4F4F5', // zinc-100
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   timeText: {
-    fontSize: 11,
-    color: '#8E8E93',
+    fontSize: 10,
+    color: '#52525B', // zinc-600
+    fontFamily: 'System', 
     fontWeight: '500',
   },
   actorBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E3F2FD',
+    backgroundColor: 'rgba(224,242,254,0.7)', // sky-100/70
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 999,
     maxWidth: 140,
   },
   actorText: {
     fontSize: 10,
-    color: '#007AFF',
+    color: '#0369A1', // sky-700
     fontWeight: '600',
   },
   messageText: {
-    fontSize: 13,
-    color: '#1F2937',
-    lineHeight: 18,
+    fontSize: 14,
+    color: '#27272A', // zinc-800
+    lineHeight: 20,
+    fontWeight: '500',
   },
 });

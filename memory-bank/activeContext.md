@@ -1,23 +1,24 @@
 # Active Context
 
 ## Current Focus
-- Ensuring codebase stability by fixing type errors and missing dependencies.
-- Refining the "Messages" screen functionality (Polls, File Attachments, UI styling).
+- Feature Parity: Implementing "Came Late" / "Left Early" options in Attendance screen.
+- Debugging: Resolving "Failed to save event" error when adding notes.
 
 ## Recent Changes
-- **Messages Screen (`supervisor/messages.tsx`)**:
-    - **UI Refinements**:
-        - **Participants Title**: Changed color to **Black** (`#000`) in both the mobile modal and desktop overlay.
-        - **Read Receipts**: Single tick Gray, Double tick Blue.
-        - **Thread List**: Unselected text Dark Gray.
-        - **Selected Thread**: Background Black, Text White.
-        - **Chat Header**: Recipient name Black.
-    - **Functionality**:
-        - Optimistic Messaging (Send & Vote).
-        - Poll Composer (English, Delete Options).
-        - Date/Time Format (`dd.MM.yyyy HH:mm`).
-        - Polling Fallback & Realtime Updates.
+### Attendance Screen (`Tilda-staff/app/supervisor/attendance.tsx`)
+- Integrated `AttendanceEventDialog` for time/comment input.
+- Added `StatusOptionsModal` for "Came Late", "Left Early", and "Reset" options.
+- **Improved `saveAttendanceEvent`**: Added handling for temporary IDs (from optimistic updates) to prevent "Failed to save event" errors when adding notes immediately after taking attendance. If a temporary ID is found, it attempts to fetch the real ID from the database before updating.
+- **Reset Option**: Confirmed "Zurücksetzen" (Reset) exists in the web version and ensured it is present in the mobile version. It resets the attendance status to "Pending".
+
+### Attendance Event Dialog (`Tilda-staff/components/AttendanceEventDialog.tsx`)
+- Implemented native `DateTimePicker` for better UX.
+- Added validation for time input.
+
+## Active Decisions
+- **Reset Functionality**: The "Reset" option sets the status to "Pending", matching the web behavior. It does not explicitly clear the notes history in the database, but the UI might hide them based on status.
+- **Time Input**: Using native picker is preferred over text input for mobile.
 
 ## Next Steps
-- Verify that the app builds and runs without errors.
-- Continue with Messages functionality verification.
+- Verify if the "Failed to save event" error is resolved with the temp ID handling.
+- If not, get the specific error message from the user.

@@ -62,8 +62,9 @@ export default function SickLeaveList({ userId }: SickLeaveListProps) {
      });
   }, [leaves, statusFilter, leaveTypeFilter]);
 
-  const renderFilterChip = (label: string, selected: boolean, onPress: () => void) => (
+  const renderFilterChip = (label: string, selected: boolean, onPress: () => void, key: string) => (
      <TouchableOpacity 
+        key={key}
         style={[styles.chip, selected && styles.chipSelected]}
         onPress={onPress}
      >
@@ -149,11 +150,12 @@ export default function SickLeaveList({ userId }: SickLeaveListProps) {
                     s === 'pending_approval' ? 'Ausstehend' : 
                     s === 'rejected' ? 'Abgelehnt' : s, 
                 statusFilter === s, 
-                () => setStatusFilter(s))
+                () => setStatusFilter(s),
+                s)
              )}
              <View style={styles.divider} />
              {['Alle', 'Ganztägig', 'Stündlich'].map(t => 
-                renderFilterChip(t, leaveTypeFilter === t, () => setLeaveTypeFilter(t))
+                renderFilterChip(t, leaveTypeFilter === t, () => setLeaveTypeFilter(t), t)
              )}
           </ScrollView>
        </View>

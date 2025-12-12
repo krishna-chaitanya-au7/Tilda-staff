@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, KeyboardAvoidingView, Platform, Modal, Alert, Switch, Linking } from 'react-native';
+import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, KeyboardAvoidingView, Platform, Modal, Alert, Switch, Linking, Pressable } from 'react-native';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
@@ -136,6 +136,12 @@ export default function SupervisorMessages() {
   // Image Viewer State
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  // Action Sheet and Report State
+  const [actionSheetVisible, setActionSheetVisible] = useState(false);
+  const [actionTarget, setActionTarget] = useState<Message | null>(null);
+  const [showReportSheet, setShowReportSheet] = useState(false);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+
   // --- DERIVED STATE ---
   
   const isMobile = width < 768;
@@ -184,6 +190,27 @@ export default function SupervisorMessages() {
     }
   }, [selectedThreadId]);
 
+  // Load blocked users
+  useEffect(() => {
+    const loadBlocked = async () => {
+      try {
+        if (!userRow?.id) return;
+        const { data, error } = await supabase
+          .from('msg_thread_blocked')
+          .select('blocked_user_id')
+          .eq('blocked_by', userRow.id);
+        if (error) {
+          console.warn('getBlockedUsers error', error);
+          return;
+        }
+        setBlockedUserIds((data || []).map((r: any) => r.blocked_user_id));
+      } catch (e) {
+        console.error('Error loading blocked users:', e);
+      }
+    };
+    loadBlocked();
+  }, [userRow?.id]);
+
   // --- FUNCTIONS ---
 
   const subscribeToMessages = (threadId: string) => {
@@ -205,6 +232,11 @@ export default function SupervisorMessages() {
           // We will wait for the 'msg_polls' INSERT event or the manual fetch to load it with the poll.
           // This prevents a "blank message" bubble from appearing before the poll data is ready.
           if (!newMsg.body && (!newMsg.attachments || newMsg.attachments.length === 0)) {
+             return;
+          }
+
+          // Filter out messages from blocked users in realtime
+          if (newMsg.sender_id !== userRow?.id && blockedUserIds.includes(newMsg.sender_id)) {
              return;
           }
 
@@ -341,7 +373,15 @@ export default function SupervisorMessages() {
           }));
        }
 
-       const formatted = (msgs || []).map((m: any) => {
+       // Filter out messages from blocked users
+       const filteredMsgs = (msgs || []).filter((m: any) => {
+          // Don't filter my own messages
+          if (m.sender_id === userRow?.id) return true;
+          // Filter out messages from blocked users
+          return !blockedUserIds.includes(m.sender_id);
+       });
+
+       const formatted = filteredMsgs.map((m: any) => {
           const poll = pollsByMsg.get(m.id);
           
           // Calculate who read this message
@@ -377,8 +417,8 @@ export default function SupervisorMessages() {
                 // Fast hack: If we assume the list `msgs` is sorted DESC (newest first):
                 // find index of receipt msg, find index of `m`. 
                 // If index(m) >= index(receipt_msg), then m is older/equal (since list is DESC).
-                const receiptMsgIndex = msgs?.findIndex((msg: any) => msg.id === r.last_read_message_id);
-                const currentMsgIndex = msgs?.findIndex((msg: any) => msg.id === m.id);
+                const receiptMsgIndex = filteredMsgs?.findIndex((msg: any) => msg.id === r.last_read_message_id);
+                const currentMsgIndex = filteredMsgs?.findIndex((msg: any) => msg.id === m.id);
                 
                 if (receiptMsgIndex !== -1 && currentMsgIndex !== -1) {
                    // If current message is "after" (higher index = older in DESC list) or same as receipt message
@@ -464,6 +504,14 @@ export default function SupervisorMessages() {
       }
       setUserRow(uRow);
 
+      // Load blocked users
+      const { data: blockedData } = await supabase
+        .from('msg_thread_blocked')
+        .select('blocked_user_id')
+        .eq('blocked_by', uRow.id);
+      const currentBlockedIds = (blockedData || []).map((r: any) => r.blocked_user_id);
+      setBlockedUserIds(currentBlockedIds);
+
       const { data: accessRows } = await supabase
           .from('user_access')
           .select('resource_type, resource_id, user_id')
@@ -537,7 +585,18 @@ export default function SupervisorMessages() {
             }
          });
 
-         const finalThreads = validThreads.map((t: any) => {
+         // Filter out threads with blocked users (for direct threads only)
+         const finalThreads = validThreads
+            .filter((t: any) => {
+               // Keep group threads
+               if (t.is_group) return true;
+               // For direct threads, check if the other participant is blocked
+               const parts = t.msg_thread_participants || [];
+               const other = parts.find((p: any) => p.user_id !== uRow.id);
+               if (!other) return true; // Keep if no other participant found
+               return !currentBlockedIds.includes(other.user_id);
+            })
+            .map((t: any) => {
              const lastMsg = lastMessageMap.get(t.id);
              const parts = t.msg_thread_participants || [];
              
@@ -1063,8 +1122,100 @@ export default function SupervisorMessages() {
      }
   };
 
+  // Action Sheet Handlers
+  const openActionSheet = (target: Message) => {
+    setActionTarget(target);
+    setActionSheetVisible(true);
+  };
+
+  const closeActionSheet = () => {
+    setActionSheetVisible(false);
+    setActionTarget(null);
+  };
+
+  const reportReasons = [
+    'Spam or advertising',
+    'Harassment or bullying',
+    'Hate speech',
+    'Nudity or sexual content',
+    'Violence or dangerous acts',
+    'Other',
+  ];
+
+  const submitReport = async (reason: string) => {
+    try {
+      if (!actionTarget || !userRow) return;
+      const payload = {
+        message_id: typeof actionTarget.id === 'string' ? Number(actionTarget.id) || null : actionTarget.id,
+        reported_user_id: actionTarget.sender_id,
+        reporter_user_id: userRow.id,
+        reason,
+        source: 'staff',
+      };
+      const { error } = await supabase
+        .from('msg_thread_reports')
+        .insert(payload);
+      if (error) throw error;
+      setShowReportSheet(false);
+      Alert.alert('Reported', 'Thanks for your report.');
+    } catch (e: any) {
+      console.error('Report failed:', e);
+      setShowReportSheet(false);
+      Alert.alert('Report failed', e?.message || 'Unknown error');
+    }
+  };
+
+  const addBlockedUser = async (targetUserId: string) => {
+    if (!userRow) return;
+    try {
+      const { error } = await supabase
+        .from('msg_thread_blocked')
+        .insert({ blocked_user_id: targetUserId, blocked_by: userRow.id });
+      if (error && !String(error.message).includes('duplicate')) {
+        throw error;
+      }
+      // Update blocked users list
+      const updatedBlocked = [...blockedUserIds, targetUserId];
+      setBlockedUserIds(updatedBlocked);
+      
+      // Filter out messages from blocked user immediately
+      setMessages(prev => prev.filter(m => m.sender_id !== targetUserId));
+      
+      // Refresh messages to ensure consistency
+      if (selectedThreadId) {
+        fetchMessages(selectedThreadId, false);
+      }
+      
+      // Refresh threads to remove threads with blocked user
+      fetchThreads(false);
+      
+      const { data } = await supabase
+        .from('users')
+        .select('first_name, family_name, name')
+        .eq('id', targetUserId)
+        .single();
+      const name = data?.name || `${data?.first_name || ''} ${data?.family_name || ''}`.trim() || targetUserId;
+      Alert.alert('User blocked', `${name} has been blocked.`);
+      closeActionSheet();
+    } catch (e: any) {
+      console.error('Block failed:', e);
+      Alert.alert('Error', e?.message || 'Failed to block user');
+    }
+  };
+
   const handleSendMessage = async () => {
      if (!newMessageText.trim() || !selectedThreadId || !userRow) return;
+     
+     // Check if we're trying to send to a blocked user
+     const selectedThread = threads.find(t => t.id === selectedThreadId);
+     if (selectedThread && !selectedThread.is_group) {
+        const otherParticipant = selectedThread.participants.find(p => p.user_id !== userRow.id);
+        if (otherParticipant && blockedUserIds.includes(otherParticipant.user_id)) {
+           Alert.alert('Cannot send message', 'You have blocked this user. Unblock them to send messages.');
+           return;
+        }
+     }
+     
      const text = newMessageText.trim();
      setNewMessageText('');
 
@@ -1286,12 +1437,17 @@ export default function SupervisorMessages() {
                                     const senderRole = item.sender?.user_type || 'child';
    
                                     return (
-                                       <View style={[styles.messageBubble, isMe ? styles.messageBubbleMe : styles.messageBubbleOther]}>
-                                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 }}>
-                                            <Text style={{ fontSize: 12, fontWeight: '600', color: isMe ? '#fff' : '#000' }}>{senderName}</Text>
-                                            {!isMe && <RoleBadge role={senderRole} />}
-                                         </View>
-                                         <ThemedText style={isMe ? styles.messageTextMe : styles.messageTextOther}>{item.content}</ThemedText>
+                                       <TouchableOpacity 
+                                          activeOpacity={1}
+                                          onLongPress={() => !isMe && openActionSheet(item)}
+                                          style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '75%' }}
+                                       >
+                                          <View style={[styles.messageBubble, isMe ? styles.messageBubbleMe : styles.messageBubbleOther]}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 }}>
+                                               <Text style={{ fontSize: 12, fontWeight: '600', color: isMe ? '#fff' : '#000' }}>{senderName}</Text>
+                                               {!isMe && <RoleBadge role={senderRole} />}
+                                            </View>
+                                            <ThemedText style={isMe ? styles.messageTextMe : styles.messageTextOther}>{item.content}</ThemedText>
                                          {item.attachments && item.attachments.map((att: any, idx: number) => (
                                            att.type === 'image' ? (
                                              <TouchableOpacity key={idx} onPress={() => setPreviewImage(att.url)}>
@@ -1343,6 +1499,7 @@ export default function SupervisorMessages() {
                                             )}
                                           </View>
                                        </View>
+                                       </TouchableOpacity>
                                     );
                                  }}
                               />
@@ -1408,7 +1565,7 @@ export default function SupervisorMessages() {
                           <Ionicons name="stats-chart" size={24} color="#007AFF" />
                        </TouchableOpacity>
                        <TouchableOpacity style={styles.inputIcon} onPress={handlePickImage}>
-                          <Ionicons name="image" size={24} color="#007AFF" />
+                          <Ionicons name="attach" size={24} color="#007AFF" />
                        </TouchableOpacity>
                        <TextInput style={styles.messageInput} placeholder="Nachricht schreiben..." placeholderTextColor="#999" value={newMessageText} onChangeText={setNewMessageText} onSubmitEditing={handleSendMessage} />
                        <TouchableOpacity style={styles.sendButton} onPress={handleSendMessage}>
@@ -1614,6 +1771,59 @@ export default function SupervisorMessages() {
            )}
          </View>
        </Modal>
+
+       {/* Action Sheet */}
+       {actionSheetVisible && actionTarget && (
+         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+           <Pressable onPress={closeActionSheet} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.2)' }} />
+           <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#ffffff', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: Math.max(insets.bottom, 8) + 80, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#e5e7eb' }}>
+             <View style={{ width: 50, height: 5, backgroundColor: '#e5e7eb', borderRadius: 3, alignSelf: 'center', marginBottom: 8 }} />
+             <TouchableOpacity
+               style={{ paddingHorizontal: 16, paddingVertical: 14 }}
+               onPress={() => {
+                 if (actionTarget.sender_id) addBlockedUser(actionTarget.sender_id);
+                 closeActionSheet();
+               }}
+             >
+               <Text style={{ color: '#b91c1c', fontWeight: '600' }}>Block user</Text>
+             </TouchableOpacity>
+             <TouchableOpacity
+               style={{ paddingHorizontal: 16, paddingVertical: 14 }}
+               onPress={() => {
+                 setShowReportSheet(true);
+                 setActionSheetVisible(false);
+               }}
+             >
+               <Text style={{ color: '#111827' }}>Report</Text>
+             </TouchableOpacity>
+             <TouchableOpacity
+               style={{ paddingHorizontal: 16, paddingVertical: 14 }}
+               onPress={closeActionSheet}
+             >
+               <Text style={{ color: '#6b7280' }}>Abbrechen</Text>
+             </TouchableOpacity>
+           </View>
+         </View>
+       )}
+
+       {/* Report Sheet */}
+       {showReportSheet && actionTarget && (
+         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+           <Pressable onPress={() => setShowReportSheet(false)} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }} />
+           <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#ffffff', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: Math.max(insets.bottom, 8) + 80, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#e5e7eb' }}>
+             <View style={{ width: 50, height: 5, backgroundColor: '#e5e7eb', borderRadius: 3, alignSelf: 'center', marginBottom: 8 }} />
+             <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827', paddingHorizontal: 16, paddingBottom: 8 }}>Report message</Text>
+             {reportReasons.map((label) => (
+               <TouchableOpacity key={label} style={{ paddingHorizontal: 16, paddingVertical: 14 }} onPress={() => submitReport(label)}>
+                 <Text style={{ color: '#111827' }}>{label}</Text>
+               </TouchableOpacity>
+             ))}
+             <TouchableOpacity style={{ paddingHorizontal: 16, paddingVertical: 14 }} onPress={() => setShowReportSheet(false)}>
+               <Text style={{ color: '#6b7280' }}>Abbrechen</Text>
+             </TouchableOpacity>
+           </View>
+         </View>
+       )}
     </ThemedView>
   );
 }

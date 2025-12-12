@@ -88,12 +88,6 @@ export default function SupervisorTabLayout() {
           href: null,
         }}
       />
-      <Tabs.Screen
-        name="eating-locations"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }

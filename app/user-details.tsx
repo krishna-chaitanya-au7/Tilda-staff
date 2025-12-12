@@ -106,60 +106,50 @@ export default function UserDetailsScreen() {
         setLoading(true);
       }
       
-      // 1. Fetch Basic User Data
-      const { data: userData, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', id)
-        .single();
+      // 1. Fetch Basic User Data & Facility (if ID known)
+      const [userResult, facilityResult] = await Promise.all([
+        supabase.from('users').select('*').eq('id', id).single(),
+        facilityId ? supabase.from('facilities').select('name').eq('id', facilityId).single() : Promise.resolve({ data: null })
+      ]);
 
-      if (error) throw error;
+      if (userResult.error) throw userResult.error;
+      const userData = userResult.data;
+      
+      if (facilityResult.data) setFacilityName(facilityResult.data.name);
 
       // 2. Enrich Data based on Type
       if (userData.user_type === 'child') {
-          const { data: info } = await supabase
-             .from('children_info')
-             .select('*')
-             .eq('user_id', id);
-          userData.children_info = info || [];
+          const [infoResult, managerResult] = await Promise.all([
+             supabase.from('children_info').select('*').eq('user_id', id),
+             userData.manager_id 
+               ? supabase.from('users').select('id, first_name, family_name, email, phone, street, street_number, zip, city').eq('id', userData.manager_id).single()
+               : Promise.resolve({ data: null })
+          ]);
 
-          if (userData.manager_id) {
-             const { data: managerData } = await supabase
-                .from('users')
-                .select('id, first_name, family_name, email, phone, street, street_number, zip, city')
-                .eq('id', userData.manager_id)
-                .single();
-             if (managerData) userData.manager = managerData;
-          }
+          userData.children_info = infoResult.data || [];
+          if (managerResult.data) userData.manager = managerResult.data;
+
       } else if (userData.user_type === 'parent') {
-          const { data: billing } = await supabase
-             .from('billing_account')
-             .select('*')
-             .eq('user_id', id)
-             .maybeSingle();
-          userData.billing_account = billing;
+          const [billingResult, kidsManagerResult, kidsRelatedResult] = await Promise.all([
+             supabase.from('billing_account').select('*').eq('user_id', id).maybeSingle(),
+             supabase.from('users').select('id, first_name, family_name, email').eq('manager_id', userData.id),
+             (userData.related_children && userData.related_children.length > 0)
+               ? supabase.from('users').select('id, first_name, family_name, email').in('id', userData.related_children)
+               : Promise.resolve({ data: [] })
+          ]);
 
-          const { data: kidsByManager } = await supabase
-             .from('users')
-             .select('id, first_name, family_name, email')
-             .eq('manager_id', userData.id);
-          
-          let allKids = kidsByManager || [];
+          userData.billing_account = billingResult.data;
 
-          if (userData.related_children && userData.related_children.length > 0) {
-             const { data: kidsByArray } = await supabase
-                .from('users')
-                .select('id, first_name, family_name, email')
-                .in('id', userData.related_children);
-             
-             if (kidsByArray) {
-                const existingIds = new Set(allKids.map((k: any) => k.id));
-                kidsByArray.forEach((k: any) => {
-                   if (!existingIds.has(k.id)) {
-                      allKids.push(k);
-                   }
-                });
-             }
+          let allKids = kidsManagerResult.data || [];
+          const kidsRelated = kidsRelatedResult.data || [];
+
+          if (kidsRelated.length > 0) {
+             const existingIds = new Set(allKids.map((k: any) => k.id));
+             kidsRelated.forEach((k: any) => {
+                if (!existingIds.has(k.id)) {
+                   allKids.push(k);
+                }
+             });
           }
           
           userData.children = allKids;
@@ -167,9 +157,8 @@ export default function UserDetailsScreen() {
 
       setUser(userData);
 
-      const facId = userData.children_info?.[0]?.facility_id || facilityId;
-      if (facId) {
-         const { data: fac } = await supabase.from('facilities').select('name').eq('id', facId).single();
+      if (!facilityId && userData.children_info?.[0]?.facility_id) {
+         const { data: fac } = await supabase.from('facilities').select('name').eq('id', userData.children_info[0].facility_id).single();
          if (fac) setFacilityName(fac.name);
       }
 
@@ -253,9 +242,9 @@ export default function UserDetailsScreen() {
      tabs = ['General', 'Logs'];
   } else {
      tabs = ['General', 'Mahlzeiten'];
-     if (from === 'klassen') {
-        tabs.push('BuT');
-     }
+     // if (from === 'klassen') {
+     //    tabs.push('BuT');
+     // }
      tabs.push('Abmeldungen', 'Logbook', 'Stundenplan', 'Betreuungsplan');
   }
 

@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View, ActivityIndicator, Text, useWindowDimensions, Modal, Alert, RefreshControl } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity, View, ActivityIndicator, Text, useWindowDimensions, Modal, Alert, RefreshControl, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -99,6 +99,10 @@ export default function SupervisorProfileScreen() {
   const [facilityName, setFacilityName] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showDeleteSheet, setShowDeleteSheet] = useState<boolean>(false);
+  const [currentView, setCurrentView] = useState<'profile' | 'blocked-users'>('profile');
+  const [blockedUsers, setBlockedUsers] = useState<{ id: string; name: string }[]>([]);
+  const [isLoadingBlocked, setIsLoadingBlocked] = useState<boolean>(false);
 
   useEffect(() => {
       const fetchSelf = async () => {
@@ -252,6 +256,138 @@ export default function SupervisorProfileScreen() {
       ]
     );
   };
+
+  const reasons = [
+    'Sicherheitsbedenken',
+    'Zu viele Benachrichtigungen',
+    'Ich benötige meinen Account nicht mehr',
+    'Sonstige Gründe',
+  ];
+
+  const openDeleteEmail = async (reason: string) => {
+    try {
+      const to = 'support@tilda.schule';
+      const subject = `Account deletion request - ${user?.first_name || ''} ${user?.family_name || ''} ${user?.email || 'User'}`;
+      const bodyLines = [
+        'Hello Team,',
+        '',
+        'I would like to request deletion of my account.',
+        `Reason: ${reason}`,
+        '',
+        `User ID: ${id || 'unknown'}`,
+        `Name: ${user?.first_name || ''} ${user?.family_name || ''}`,
+        `Email: ${user?.email || ''}`,
+        '',
+        'Please confirm once this request has been processed.',
+        '',
+        'Thank you.'
+      ];
+      const mailto = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+      await Linking.openURL(mailto);
+    } catch (e) {
+      console.error('Open mail failed', e);
+      Alert.alert('Error', 'Could not open mail app');
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    setShowDeleteSheet(true);
+  };
+
+  const loadBlockedUsers = useCallback(async () => {
+    if (!id) return;
+    setIsLoadingBlocked(true);
+    try {
+      const { data, error } = await supabase
+        .from('msg_thread_blocked')
+        .select('blocked_user_id, users!msg_thread_blocked_blocked_user_id_fkey(name, first_name, family_name)')
+        .eq('blocked_by', id);
+      
+      if (error) throw error;
+      
+      const formatted = (data || []).map((r: any) => ({
+        id: r.blocked_user_id,
+        name: (r.users?.name || `${r.users?.first_name || ''} ${r.users?.family_name || ''}`.trim() || r.blocked_user_id) as string,
+      }));
+      
+      setBlockedUsers(formatted);
+    } catch (e) {
+      console.error('Error fetching blocked users:', e);
+      Alert.alert('Error', 'Failed to load blocked users');
+    } finally {
+      setIsLoadingBlocked(false);
+    }
+  }, [id]);
+
+  const handleShowBlockedUsers = () => {
+    setCurrentView('blocked-users');
+    loadBlockedUsers();
+  };
+
+  const handleUnblock = async (targetId: string) => {
+    try {
+      if (!id) return;
+      const { error } = await supabase
+        .from('msg_thread_blocked')
+        .delete()
+        .match({ blocked_user_id: targetId, blocked_by: id });
+      if (error) throw error;
+      await loadBlockedUsers();
+      Alert.alert('Success', 'User unblocked');
+    } catch (e: any) {
+      console.error('Unblock failed:', e);
+      Alert.alert('Error', e?.message || 'Failed to unblock');
+    }
+  };
+
+  // Show blocked users screen
+  if (currentView === 'blocked-users') {
+    return (
+      <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
+        <View style={styles.blockedUsersHeader}>
+          <TouchableOpacity style={styles.backButton} onPress={() => setCurrentView('profile')}>
+            <Ionicons name="arrow-back" size={24} color="#000" />
+          </TouchableOpacity>
+          <Text style={styles.blockedUsersHeaderTitle}>Blocked Users</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView 
+          style={styles.blockedUsersContent}
+          refreshControl={
+            <RefreshControl refreshing={isLoadingBlocked} onRefresh={loadBlockedUsers} tintColor="#007AFF" />
+          }
+        >
+          {isLoadingBlocked ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={styles.loadingText}>Loading…</Text>
+            </View>
+          ) : blockedUsers.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No blocked users</Text>
+            </View>
+          ) : (
+            blockedUsers.map((u) => (
+              <View key={u.id} style={styles.blockedUserItem}>
+                <View style={styles.blockedUserInfo}>
+                  <View style={styles.blockedUserIcon}>
+                    <Text style={styles.blockedUserIconText}>🚫</Text>
+                  </View>
+                  <View style={styles.blockedUserDetails}>
+                    <Text style={styles.blockedUserName}>{u.name}</Text>
+                    <Text style={styles.blockedUserSubtitle}>Tap to unblock this user</Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => handleUnblock(u.id)} style={styles.unblockButton}>
+                  <Text style={styles.unblockButtonText}>Unblock</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
 
   if (loading || !id) {
     return (
@@ -421,6 +557,33 @@ export default function SupervisorProfileScreen() {
             </View>
          </View>
 
+         {/* Settings Section */}
+         <View style={styles.settingsSection}>
+            <Text style={styles.settingsTitle}>Settings</Text>
+            
+            <TouchableOpacity 
+               style={styles.settingsItem}
+               onPress={handleShowBlockedUsers}
+            >
+               <View style={styles.settingsIcon}>
+                  <Text style={styles.settingsIconText}>🚫</Text>
+               </View>
+               <View style={styles.settingsInfo}>
+                  <Text style={styles.settingsItemTitle}>Blocked Users</Text>
+                  <Text style={styles.settingsItemSubtitle}>Manage users you have blocked</Text>
+               </View>
+               <Text style={styles.settingsArrow}>›</Text>
+            </TouchableOpacity>
+         </View>
+
+         {/* Delete Account Button */}
+         <View style={styles.deleteAccountContainer}>
+            <TouchableOpacity style={styles.deleteAccountButton} onPress={handleDeleteAccount}>
+                <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                <Text style={styles.deleteAccountText}>Account löschen</Text>
+            </TouchableOpacity>
+         </View>
+
          {/* Logout Button */}
          <View style={styles.logoutContainer}>
             <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -431,6 +594,25 @@ export default function SupervisorProfileScreen() {
          
          <View style={{ height: 80 }} />
       </ScrollView>
+
+      {/* Delete Account Sheet */}
+      {showDeleteSheet && (
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+          <TouchableOpacity activeOpacity={1} onPress={() => setShowDeleteSheet(false)} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }} />
+          <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#ffffff', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: Math.max(insets.bottom, 8), paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#e5e7eb' }}>
+            <View style={{ width: 50, height: 5, backgroundColor: '#e5e7eb', borderRadius: 3, alignSelf: 'center', marginBottom: 8 }} />
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827', paddingHorizontal: 16, paddingBottom: 8 }}>Account löschen</Text>
+            {reasons.map((label) => (
+              <TouchableOpacity key={label} style={{ paddingHorizontal: 16, paddingVertical: 14 }} onPress={() => { setShowDeleteSheet(false); openDeleteEmail(label); }}>
+                <Text style={{ color: '#111827' }}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={{ paddingHorizontal: 16, paddingVertical: 14 }} onPress={() => setShowDeleteSheet(false)}>
+              <Text style={{ color: '#6b7280' }}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -657,11 +839,196 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '500',
   },
-  // Logout
-  logoutContainer: {
-    marginTop: 30,
+  // Settings Section
+  settingsSection: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e7',
+  },
+  settingsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 16,
+  },
+  settingsItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  settingsIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  settingsIconText: {
+    fontSize: 18,
+  },
+  settingsInfo: {
+    flex: 1,
+  },
+  settingsItemTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1a1a1a',
+    marginBottom: 2,
+  },
+  settingsItemSubtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  settingsArrow: {
+    fontSize: 18,
+    color: '#666',
+  },
+  // Delete Account
+  deleteAccountContainer: {
+    marginTop: 12,
     paddingHorizontal: 16,
     alignItems: 'center',
+  },
+  deleteAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  deleteAccountText: {
+    color: '#ef4444',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Logout
+  logoutContainer: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  // Blocked Users Screen
+  blockedUsersHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+  },
+  blockedUsersHeaderTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+    flex: 1,
+    textAlign: 'center',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  blockedUsersContent: {
+    flex: 1,
+    backgroundColor: '#F2F2F7',
+    padding: 16,
+  },
+  blockedUserItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  blockedUserInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  blockedUserIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  blockedUserIconText: {
+    fontSize: 18,
+  },
+  blockedUserDetails: {
+    flex: 1,
+  },
+  blockedUserName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 2,
+  },
+  blockedUserSubtitle: {
+    fontSize: 12,
+    color: '#666',
+  },
+  unblockButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#b91c1c',
+    borderRadius: 8,
+  },
+  unblockButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#666',
+  },
+  emptyContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
   },
   logoutButton: {
     flexDirection: 'row',
