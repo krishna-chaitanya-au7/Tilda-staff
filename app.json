@@ -12,7 +12,7 @@
         "supportsTablet": true,
         "requireFullScreen": false,
         "bundleIdentifier": "tildastaff.app",
-        "buildNumber": "10",
+        "buildNumber": "11",
         "infoPlist": {
           "ITSAppUsesNonExemptEncryption": false,
           "UIDeviceFamily": [2],

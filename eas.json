@@ -9,19 +9,21 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal",
+      "distribution": "store",
       "ios": {
         "simulator": false
       }
     },
     "production": {
       "autoIncrement": true,
+      "distribution": "store",
       "ios": {
         "simulator": false
       }
     }
   },
   "submit": {
+    "preview": {},
     "production": {}
   }
 }
