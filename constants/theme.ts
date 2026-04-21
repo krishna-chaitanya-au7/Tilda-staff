@@ -8,6 +8,9 @@ import { Platform } from 'react-native';
 const tintColorLight = '#0a7ea4';
 const tintColorDark = '#fff';
 
+/** Extra padding below the status bar so main screen titles line up across facility tabs. */
+export const SCREEN_HEADER_TOP_PAD = 8;
+
 export const Colors = {
   light: {
     text: '#11181C',

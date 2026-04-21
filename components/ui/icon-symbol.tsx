@@ -24,6 +24,11 @@ const MAPPING = {
   'bubble.left.and.bubble.right.fill': 'chat',
   'qrcode': 'qr-code',
   'person.fill': 'person',
+  /** Support-style ticket (not cinema “confirmation number” stub). */
+  'ticket.fill': 'support-agent',
+  'fork.knife': 'restaurant',
+  calendar: 'calendar-today',
+  'bell.fill': 'notifications',
 } as IconMapping;
 
 /**

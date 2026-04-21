@@ -9,18 +9,29 @@ interface SupervisionScheduleItem {
   lunch: string;
 }
 
+interface KindergartenScheduleItem {
+  day: string;
+  lunch: string;
+  drop_time: string;
+  pickup_time: string;
+}
+
 interface BetreuungsplanTabProps {
   childId: string;
   facilityId: string;
   academicYearId: string;
+  /** 'kindergarten_schedule' for facility/kindergarten, 'supervision_schedule' for school */
+  scheduleField?: 'supervision_schedule' | 'kindergarten_schedule';
 }
 
 export default function BetreuungsplanTab({
   childId,
   facilityId,
   academicYearId,
+  scheduleField = 'supervision_schedule',
 }: BetreuungsplanTabProps) {
   const [schedule, setSchedule] = useState<SupervisionScheduleItem[]>([]);
+  const [kgSchedule, setKgSchedule] = useState<KindergartenScheduleItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,7 +42,7 @@ export default function BetreuungsplanTab({
       try {
         const { data, error } = await supabase
           .from('children_info')
-          .select('supervision_schedule')
+          .select('supervision_schedule, kindergarten_schedule')
           .eq('user_id', childId)
           .eq('facility_id', facilityId)
           .eq('academic_year', academicYearId)
@@ -39,6 +50,7 @@ export default function BetreuungsplanTab({
 
         if (error) throw error;
         setSchedule(data?.supervision_schedule || []);
+        setKgSchedule(data?.kindergarten_schedule || []);
       } catch (error) {
         console.error('Error fetching betreuungsplan:', error);
       } finally {
@@ -66,10 +78,40 @@ export default function BetreuungsplanTab({
     );
   }
 
-  if (schedule.length === 0) {
+  const displaySchedule = scheduleField === 'kindergarten_schedule' ? kgSchedule : schedule;
+  if (displaySchedule.length === 0) {
     return (
       <View style={styles.center}>
         <ThemedText style={styles.emptyText}>Kein Betreuungsplan vorhanden</ThemedText>
+      </View>
+    );
+  }
+
+  if (scheduleField === 'kindergarten_schedule') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.card}>
+          <View style={styles.header}>
+            <ThemedText style={styles.headerCell}>Tag</ThemedText>
+            <ThemedText style={styles.headerCell}>Bringzeit</ThemedText>
+            <ThemedText style={styles.headerCell}>Abholzeit</ThemedText>
+            <ThemedText style={styles.headerCell}>Essen</ThemedText>
+          </View>
+          {kgSchedule.map((item, index) => (
+            <View key={index} style={styles.row}>
+              <ThemedText style={styles.cell}>{germanDayMap[item.day] || item.day}</ThemedText>
+              <ThemedText style={styles.cell}>{item.drop_time || '-'}</ThemedText>
+              <ThemedText style={styles.cell}>{item.pickup_time || '-'}</ThemedText>
+              <View style={styles.cell}>
+                <View style={[styles.badge, item.lunch === 'kein Essen' ? styles.bgGray : styles.bgAmber]}>
+                  <ThemedText style={[styles.badgeText, item.lunch === 'kein Essen' ? styles.textGray : styles.textAmber]}>
+                    {item.lunch || '-'}
+                  </ThemedText>
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
       </View>
     );
   }

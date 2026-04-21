@@ -3,7 +3,7 @@ import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator,
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useSegments } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -15,7 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
 import { RoleBadge } from '@/components/RoleBadge';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { Colors } from '@/constants/theme';
+import { Colors, SCREEN_HEADER_TOP_PAD } from '@/constants/theme';
 
 interface PollOption {
   id: string;
@@ -60,6 +60,7 @@ interface Message {
   content: string;
   created_at: string;
   sender_id: string;
+  sender?: any;
   attachments?: any[];
   poll?: Poll;
   readBy?: string[]; // Add readBy property
@@ -100,6 +101,10 @@ export default function SupervisorMessages() {
   
   const [userRow, setUserRow] = useState<any>(null);
   const [supervisorId, setSupervisorId] = useState<string | null>(null);
+  const [facilityId, setFacilityId] = useState<string | null>(null);
+  const segments = useSegments();
+  const rootSeg = segments[0] as string | undefined;
+  const isFacilityContext = rootSeg === 'facility' || rootSeg === 'teacher';
 
   // Chat State
   const [messages, setMessages] = useState<Message[]>([]);
@@ -517,21 +522,31 @@ export default function SupervisorMessages() {
           .select('resource_type, resource_id, user_id')
           .or(`user_id.eq.${user.id},user_id.eq.${uRow.id}`);
 
+      const facilityAccess = (accessRows || []).find(
+        (row: any) => row.resource_type === 'facility',
+      );
       const supervisorAccess = (accessRows || []).find(
         (row: any) => row.resource_type === 'supervisor',
       );
 
-      const supId = supervisorAccess?.resource_id || uRow.record_id;
-      setSupervisorId(supId);
+      if (isFacilityContext && facilityAccess?.resource_id) {
+        setFacilityId(facilityAccess.resource_id);
+        setSupervisorId(null);
+      } else {
+        const supId = supervisorAccess?.resource_id || uRow.record_id;
+        setSupervisorId(supId);
+        setFacilityId(null);
+      }
 
-      if (!supId) {
-        setError('No supervisor access found');
+      const contextId = isFacilityContext ? facilityAccess?.resource_id : (supervisorAccess?.resource_id || uRow.record_id);
+      if (!contextId) {
+        setError(isFacilityContext ? 'No facility access found' : 'No supervisor access found');
         setLoading(false);
         return;
       }
       
-      // 2. Fetch Threads
-      const { data: threadsData, error: threadsError } = await supabase
+      // 2. Fetch Threads (by facility_id for kindergarten, supervisor_id for school staff)
+      const threadsQuery = supabase
         .from('msg_threads')
         .select(`
           id, 
@@ -548,8 +563,11 @@ export default function SupervisorMessages() {
             users(id, first_name, family_name, user_type)
           )
         `)
-        .eq('supervisor_id', supId)
         .order('created_at', { ascending: false });
+
+      const { data: threadsData, error: threadsError } = isFacilityContext
+        ? await threadsQuery.eq('facility_id', contextId)
+        : await threadsQuery.eq('supervisor_id', contextId);
 
       if (threadsError) throw threadsError;
 
@@ -659,26 +677,24 @@ export default function SupervisorMessages() {
   const performSearch = async (query: string) => {
      setLoadingParents(true);
      try {
-       if (!supervisorId || !userRow) return;
-       
-       // 1. Get facilities
-       const { data: coordinatorLinks } = await supabase
-         .from('supervisor_coordinator_facilities')
-         .select('facility_id')
-         .eq('staff_user_id', userRow.id);
-
-       const coordinatorIds = coordinatorLinks?.map((l: any) => l.facility_id) || [];
-
-       const { data: ownedFacilities } = await supabase
-         .from('facilities')
-         .select('id')
-         .eq('supervisor_id', supervisorId)
-         .eq('is_deleted', false);
-
-       const ownedIds = ownedFacilities?.map(f => f.id) || [];
-       const facilityIds = Array.from(new Set([...coordinatorIds, ...ownedIds]));
-       
-       if (facilityIds.length === 0) {
+       let facilityIds: string[] = [];
+       if (isFacilityContext && facilityId) {
+         facilityIds = [facilityId];
+       } else if (supervisorId && userRow) {
+         const { data: coordinatorLinks } = await supabase
+           .from('supervisor_coordinator_facilities')
+           .select('facility_id')
+           .eq('staff_user_id', userRow.id);
+         const coordinatorIds = coordinatorLinks?.map((l: any) => l.facility_id) || [];
+         const { data: ownedFacilities } = await supabase
+           .from('facilities')
+           .select('id')
+           .eq('supervisor_id', supervisorId)
+           .eq('is_deleted', false);
+         const ownedIds = ownedFacilities?.map(f => f.id) || [];
+         facilityIds = Array.from(new Set([...coordinatorIds, ...ownedIds]));
+       }
+       if (!userRow || facilityIds.length === 0) {
           setParentOptions([]);
           return;
        }
@@ -819,7 +835,8 @@ export default function SupervisorMessages() {
   };
 
   const handleStartConversation = async () => {
-     if (!selectedRecipient) return;
+     const contextId = isFacilityContext ? facilityId : supervisorId;
+     if (!selectedRecipient || !contextId) return;
      
      const targetUserId = selectedRecipient.id;
      const text = initialMessage.trim();
@@ -837,13 +854,18 @@ export default function SupervisorMessages() {
         let targetThreadId = existing?.id;
 
         if (!targetThreadId) {
+            const insertPayload: Record<string, unknown> = {
+               scope: 'direct',
+               created_by: userRow.id
+            };
+            if (isFacilityContext && facilityId) {
+               insertPayload.facility_id = facilityId;
+            } else if (supervisorId) {
+               insertPayload.supervisor_id = supervisorId;
+            }
             const { data: threadData, error: threadError } = await supabase
               .from('msg_threads')
-              .insert({
-                 supervisor_id: supervisorId,
-                 scope: 'direct',
-                 created_by: userRow.id
-              })
+              .insert(insertPayload)
               .select('id')
               .single();
 
@@ -882,6 +904,9 @@ export default function SupervisorMessages() {
   // ... Image/Poll handlers ...
   const handlePickImage = async () => {
     try {
+      // Request media library permissions first (for images/videos if user wants to pick from gallery)
+      // Note: DocumentPicker uses system file picker which handles permissions automatically,
+      // but we should still handle errors gracefully
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*', // Allow all file types
         copyToCacheDirectory: true,
@@ -890,14 +915,36 @@ export default function SupervisorMessages() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         await uploadAttachment(result.assets[0]);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Document picker error:", err);
-      Alert.alert("Error", "Failed to pick file");
+      // Handle permission errors
+      if (err?.message?.includes('permission') || err?.code === 'E_PERMISSION_MISSING') {
+        Alert.alert(
+          'Berechtigung erforderlich',
+          'Um Dateien auszuwählen, benötigt die App Zugriff auf Ihre Dateien. Bitte erlauben Sie den Zugriff in den App-Einstellungen.',
+          [
+            { text: 'Abbrechen', style: 'cancel' },
+            { 
+              text: 'Einstellungen öffnen', 
+              onPress: () => {
+                if (Platform.OS === 'ios') {
+                  Linking.openURL('app-settings:');
+                } else {
+                  Linking.openSettings();
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Fehler', 'Fehler beim Auswählen der Datei. Bitte versuchen Sie es erneut.');
+      }
     }
   };
 
   const uploadAttachment = async (asset: DocumentPicker.DocumentPickerAsset) => {
-    if (!selectedThreadId || !userRow || !supervisorId) return;
+    const contextId = isFacilityContext ? facilityId : supervisorId;
+    if (!selectedThreadId || !userRow || !contextId) return;
     
     setUploading(true);
     try {
@@ -905,10 +952,11 @@ export default function SupervisorMessages() {
       const response = await fetch(asset.uri);
       const arrayBuffer = await response.arrayBuffer();
       
-      // 2. Upload to Supabase
+      // 2. Upload to Supabase (facility or supervisor folder)
       const fileName = asset.name || `file_${Date.now()}`;
       const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `supervisor/${supervisorId}/${selectedThreadId}/${Date.now()}_${safeName}`;
+      const folder = isFacilityContext ? 'facility' : 'supervisor';
+      const path = `${folder}/${contextId}/${selectedThreadId}/${Date.now()}_${safeName}`;
       
       const { error: uploadError } = await supabase.storage
         .from('messenger')
@@ -969,8 +1017,8 @@ export default function SupervisorMessages() {
      if (!selectedThreadId || !userRow || !pollQuestion.trim()) return;
      setUploading(true);
 
+     const tempId = `temp_${Date.now()}`;
      try {
-        const tempId = `temp_${Date.now()}`;
         const tempPoll: Poll = {
           id: tempId,
           question: pollQuestion,
@@ -1324,7 +1372,7 @@ export default function SupervisorMessages() {
   }
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }]}>
        <View style={styles.mainRow}>
          {showLeftColumn && (
            <View style={[styles.leftColumn, { width: isMobile ? '100%' : leftColumnWidth }]}>
@@ -1837,16 +1885,16 @@ const styles = StyleSheet.create({
   rightColumn: { width: '25%', backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: '#E5E5EA', display: 'flex', flexDirection: 'column' },
   header: {
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 0,
     paddingBottom: 8,
     backgroundColor: '#F2F2F7',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5EA',
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#000',
+    color: '#111827',
   },
   columnHeader: { padding: 16, paddingBottom: 8 },
   columnTitle: { fontSize: 18, fontWeight: '700' },

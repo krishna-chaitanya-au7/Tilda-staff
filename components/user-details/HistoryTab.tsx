@@ -130,7 +130,7 @@ export default function HistoryTab({ childId, currentAcademicYearId }: HistoryTa
 
           {data.supervision_schedule && data.supervision_schedule.length > 0 && (
             <View style={styles.section}>
-              <ThemedText style={styles.sectionTitle}>Supervision Schedule</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Supervision Schedule (School)</ThemedText>
               {data.supervision_schedule.map((item, idx) => (
                 <View key={idx} style={styles.scheduleRow}>
                   <ThemedText style={styles.day}>{item.day}</ThemedText>
@@ -140,6 +140,27 @@ export default function HistoryTab({ childId, currentAcademicYearId }: HistoryTa
                     </View>
                     <View style={styles.tag}>
                       <ThemedText style={styles.tagText}>{item.lunch}</ThemedText>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+          {data.kindergarten_schedule && data.kindergarten_schedule.length > 0 && (
+            <View style={styles.section}>
+              <ThemedText style={styles.sectionTitle}>Kindergarten Schedule</ThemedText>
+              {data.kindergarten_schedule.map((item: { day: string; lunch?: string; drop_time?: string; pickup_time?: string }, idx: number) => (
+                <View key={idx} style={styles.scheduleRow}>
+                  <ThemedText style={styles.day}>{item.day}</ThemedText>
+                  <View style={styles.tags}>
+                    <View style={styles.tag}>
+                      <ThemedText style={styles.tagText}>Bring: {item.drop_time || '-'}</ThemedText>
+                    </View>
+                    <View style={styles.tag}>
+                      <ThemedText style={styles.tagText}>Abhol: {item.pickup_time || '-'}</ThemedText>
+                    </View>
+                    <View style={styles.tag}>
+                      <ThemedText style={styles.tagText}>{item.lunch || '-'}</ThemedText>
                     </View>
                   </View>
                 </View>
@@ -233,6 +254,29 @@ const styles = StyleSheet.create({
     color: '#4B5563',
   },
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

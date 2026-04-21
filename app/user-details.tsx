@@ -87,7 +87,13 @@ interface Guardian {
 }
 
 export default function UserDetailsScreen() {
-  const { id, facilityId, academicYearId, from } = useLocalSearchParams();
+  const { id, facilityId, academicYearId, from, returnTo } = useLocalSearchParams<{
+    id?: string;
+    facilityId?: string;
+    academicYearId?: string;
+    from?: string;
+    returnTo?: string;
+  }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isLandscape = width > 768; 
@@ -203,10 +209,12 @@ export default function UserDetailsScreen() {
   }, [fetchUserDetails, fetchGuardians]);
 
   const handleBack = () => {
-    if (from === 'attendance') {
-      router.dismissTo('/supervisor/attendance');
+    if (returnTo) {
+      router.dismissTo(returnTo as any);
+    } else if (from === 'attendance') {
+      router.dismissTo('/supervisor/attendance' as any);
     } else if (from === 'klassen') {
-      router.dismissTo('/supervisor/grouping');
+      router.dismissTo('/supervisor/grouping' as any);
     } else {
       router.back();
     }
@@ -525,7 +533,7 @@ export default function UserDetailsScreen() {
                      {activeTab === 'Abmeldungen' && <SickLeaveList userId={user.id} />}
                      {activeTab === 'Logbook' && <LogbookTab userId={user.id} academicYearId={String(academicYearId)} />}
                      {activeTab === 'Stundenplan' && <StundenplanTab userId={user.id} />}
-                     {activeTab === 'Betreuungsplan' && <BetreuungsplanTab childId={user.id} academicYearId={String(academicYearId)} facilityId={String(facilityId)} />}
+                     {activeTab === 'Betreuungsplan' && <BetreuungsplanTab childId={user.id} academicYearId={String(academicYearId)} facilityId={String(facilityId)} scheduleField={(returnTo || '').includes('/facility') ? 'kindergarten_schedule' : 'supervision_schedule'} />}
                   </View>
                </View>
             </View>

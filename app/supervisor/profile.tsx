@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
+import { SCREEN_HEADER_TOP_PAD } from '@/constants/theme';
 
 // Tabs (Removed as per request)
 // import MahlzeitenTab from '@/components/user-details/MahlzeitenTab';
@@ -343,7 +344,7 @@ export default function SupervisorProfileScreen() {
   // Show blocked users screen
   if (currentView === 'blocked-users') {
     return (
-      <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
+      <View style={[styles.mainContainer, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }]}>
         <View style={styles.blockedUsersHeader}>
           <TouchableOpacity style={styles.backButton} onPress={() => setCurrentView('profile')}>
             <Ionicons name="arrow-back" size={24} color="#000" />
@@ -463,7 +464,7 @@ export default function SupervisorProfileScreen() {
           
           <View style={styles.infoRow}>
              <Ionicons name="call-outline" size={18} color="#666" />
-             <View>
+             <View style={styles.infoValueWrap}>
                 <ThemedText style={styles.infoLabel}>Phone</ThemedText>
                 <ThemedText style={styles.infoValue}>{user.phone || '-'}</ThemedText>
              </View>
@@ -471,7 +472,7 @@ export default function SupervisorProfileScreen() {
 
           <View style={styles.infoRow}>
              <Ionicons name="location-outline" size={18} color="#666" />
-             <View>
+             <View style={styles.infoValueWrap}>
                 <ThemedText style={styles.infoLabel}>Address</ThemedText>
                 <ThemedText style={styles.infoValue}>{getAddress(user)}</ThemedText>
              </View>
@@ -479,9 +480,9 @@ export default function SupervisorProfileScreen() {
 
           <View style={styles.infoRow}>
              <Ionicons name="mail-outline" size={18} color="#666" />
-             <View>
+             <View style={styles.infoValueWrap}>
                 <ThemedText style={styles.infoLabel}>Email</ThemedText>
-                <ThemedText style={styles.infoValue}>{user.email || '-'}</ThemedText>
+                <Text style={styles.infoValueEmail} numberOfLines={2} ellipsizeMode="tail">{user.email || '-'}</Text>
              </View>
           </View>
         </View>
@@ -508,12 +509,12 @@ export default function SupervisorProfileScreen() {
   const InfoItem = ({ label, value, fullWidth }: { label: string, value: string, fullWidth?: boolean }) => (
     <View style={[styles.infoItem, fullWidth && { width: '100%' }]}>
         <Text style={styles.infoItemLabel}>{label}</Text>
-        <Text style={styles.infoItemValue}>{value}</Text>
+        <Text style={styles.infoItemValue} numberOfLines={2} ellipsizeMode="tail">{value}</Text>
     </View>
   );
 
   return (
-    <View style={styles.mainContainer}>
+    <View style={[styles.mainContainer, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }]}>
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -633,7 +634,7 @@ const styles = StyleSheet.create({
   // Hero
   heroSection: {
     backgroundColor: '#007AFF',
-    paddingTop: 60,
+    paddingTop: 52,
     paddingBottom: 40,
     paddingHorizontal: 20,
     borderBottomLeftRadius: 24,
@@ -734,6 +735,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     alignItems: 'flex-start',
   },
+  infoValueWrap: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 8,
+  },
   infoLabel: {
     fontSize: 12,
     color: '#8E8E93',
@@ -741,6 +747,11 @@ const styles = StyleSheet.create({
   },
   infoValue: {
     fontSize: 14,
+    color: '#000',
+    fontWeight: '500',
+  },
+  infoValueEmail: {
+    fontSize: 12,
     color: '#000',
     fontWeight: '500',
   },
@@ -825,7 +836,8 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   infoItem: {
-    width: '47%', 
+    width: '47%',
+    minWidth: 0,
     marginBottom: 8,
   },
   infoItemLabel: {
@@ -835,7 +847,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   infoItemValue: {
-    fontSize: 15,
+    fontSize: 13,
     color: '#000',
     fontWeight: '500',
   },

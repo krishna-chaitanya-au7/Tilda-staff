@@ -21,6 +21,8 @@ interface AttendanceLogsPanelProps {
   supervisorId: string;
   isCoordinator: boolean;
   accessibleFacilities: string[];
+  /** When true (facility/kindergarten), use kindergarten_schedule for eligibility and audit diff */
+  useKindergartenSchedule?: boolean;
 }
 
 interface LogEntry {
@@ -76,13 +78,38 @@ const lunchToggled = (oldSchedule: any[], newSchedule: any[]) => {
   });
 };
 
+// Kindergarten: eligible if has at least one weekday entry
+const isKindergartenEligible = (schedule: any[]) =>
+  Array.isArray(schedule) && schedule.length > 0;
+
+// Kindergarten: any change in drop_time, pickup_time, or lunch
+const kindergartenScheduleChanged = (oldSchedule: any[], newSchedule: any[]) => {
+  if (!Array.isArray(oldSchedule) || !Array.isArray(newSchedule)) return false;
+  const byDay = (arr: any[]) => Object.fromEntries(arr.map((d) => [d.day, d]));
+  const o = byDay(oldSchedule);
+  const n = byDay(newSchedule);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  return days.some((d) => {
+    const oldEntry = o[d];
+    const newEntry = n[d];
+    if (!oldEntry && !newEntry) return false;
+    if (!oldEntry || !newEntry) return true;
+    return (
+      (oldEntry.drop_time !== newEntry.drop_time) ||
+      (oldEntry.pickup_time !== newEntry.pickup_time) ||
+      normalize(oldEntry.lunch) !== normalize(newEntry.lunch)
+    );
+  });
+};
+
 export default function AttendanceLogsPanel({
   selectedAcademicYearId,
   selectedFacilityId,
   selectedDate,
   supervisorId,
   isCoordinator,
-  accessibleFacilities
+  accessibleFacilities,
+  useKindergartenSchedule = false,
 }: AttendanceLogsPanelProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -162,16 +189,17 @@ export default function AttendanceLogsPanel({
       // 2. Fetch eligible children IDs in these facilities for the current academic year
       const { data: children, error: childrenErr } = await supabase
         .from('children_info')
-        .select('id, user_id, supervision_schedule, supervision_groups')
+        .select('id, user_id, supervision_schedule, supervision_groups, kindergarten_schedule')
         .in('facility_id', targetFacilities)
         .eq('academic_year', selectedAcademicYearId)
         .eq('is_deleted', false);
 
       if (childrenErr) throw childrenErr;
 
-      // Eligible children based on current supervision schedule (matching web logic)
       const eligibleChildren = (children || []).filter((c: any) =>
-        isSupervisionEligible(c?.supervision_schedule || [])
+        useKindergartenSchedule
+          ? isKindergartenEligible(c?.kindergarten_schedule || [])
+          : isSupervisionEligible(c?.supervision_schedule || [])
       );
 
       const recordIds = eligibleChildren.map((c: any) => c.id);
@@ -230,19 +258,27 @@ export default function AttendanceLogsPanel({
       let filteredLogs = parsedLogs.filter((row: any) => {
          if (row.table_name === 'child_leaves') return true; // Always include leaves
          
+         if (useKindergartenSchedule) {
+           const oldKg = row.old_data?.kindergarten_schedule || [];
+           const newKg = row.new_data?.kindergarten_schedule || [];
+           if (!isKindergartenEligible(newKg)) return false;
+           return kindergartenScheduleChanged(oldKg, newKg);
+         }
+         
          const oldSch = row.old_data?.supervision_schedule || [];
          const newSch = row.new_data?.supervision_schedule || [];
-         
-         // Check if child is eligible in NEW data
          if (!isSupervisionEligible(newSch)) return false;
-         
          const supChange = supervisionImproved(oldSch, newSch);
          const foodChange = lunchToggled(oldSch, newSch);
          return supChange || foodChange;
       });
       
       // Sort by date desc
-      filteredLogs.sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime());
+      filteredLogs.sort((a, b) => {
+        const timeB = b?.changed_at ? new Date(b.changed_at).getTime() : 0;
+        const timeA = a?.changed_at ? new Date(a.changed_at).getTime() : 0;
+        return timeB - timeA;
+      });
       filteredLogs = filteredLogs.slice(0, 100); // Limit display
 
       // 4. Fetch Actors
@@ -312,16 +348,36 @@ export default function AttendanceLogsPanel({
                 }
              }
         } else if (log.table_name === 'children_info') {
+             if (useKindergartenSchedule) {
+               const oldKg = log.old_data?.kindergarten_schedule || [];
+               const newKg = log.new_data?.kindergarten_schedule || [];
+               const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+               const messages: string[] = [];
+               const byDay = (arr: any[]) => Object.fromEntries(arr.map((x: any) => [x.day, x]));
+               const o = byDay(oldKg);
+               const n = byDay(newKg);
+               days.forEach(d => {
+                 const oldEntry = o[d];
+                 const newEntry = n[d];
+                 if (oldEntry?.drop_time !== newEntry?.drop_time || oldEntry?.pickup_time !== newEntry?.pickup_time) {
+                   messages.push(`${d}: Bring/Abhol: ${oldEntry?.drop_time || '-'}/${oldEntry?.pickup_time || '-'} → ${newEntry?.drop_time || '-'}/${newEntry?.pickup_time || '-'}`);
+                   level = 'info';
+                 }
+                 if (normalize(oldEntry?.lunch) !== normalize(newEntry?.lunch)) {
+                   messages.push(`${d}: Essen: ${oldEntry?.lunch || '-'} → ${newEntry?.lunch || '-'}`);
+                   level = 'info';
+                 }
+               });
+               if (messages.length > 0) message = messages.join('; ');
+             } else {
              const oldSch = log.old_data?.supervision_schedule || [];
              const newSch = log.new_data?.supervision_schedule || [];
-             
              const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
              const messages: string[] = [];
              
              days.forEach(d => {
                 const beforeSupRaw = oldSch.find((s: any) => s.day === d)?.supervision;
                 const afterSupRaw = newSch.find((s: any) => s.day === d)?.supervision;
-                
                 const beforeSup = normalize(beforeSupRaw);
                 const afterSup = normalize(afterSupRaw);
 
@@ -347,6 +403,7 @@ export default function AttendanceLogsPanel({
                // Strictly filter out if no detailed messages are generated, 
                // avoiding raw change_message fallback.
                return null;
+             }
              }
         }
 

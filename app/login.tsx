@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
+import { resolveFacilityBranchPath, type UserAccessRow } from '@/lib/facilityPermissions';
 
 type ErrorCode =
   | 'invalid_credentials'
@@ -38,7 +39,7 @@ export default function LoginScreen() {
 
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('user_type, id, auth_id')
+        .select('user_type, id, auth_id, record_id')
         .eq('auth_id', authData.user.id)
         .single();
 
@@ -88,14 +89,25 @@ export default function LoginScreen() {
         (access: any) => access.resource_type === 'supervisor'
       );
 
-      if (hasFacilityAccess || userType === 'facility' || userType === 'facility_staff') {
-        router.replace('/facility');
-      } else if (
-        hasSupervisorAccess ||
-        userType === 'supervisor' ||
-        userType === 'supervisor_staff'
-      ) {
-        // Redirect explicitly to the supervisor folder, not (tabs)
+      const utLower = String(userType).toLowerCase();
+      const isSupervisorUserType = utLower === 'supervisor' || utLower === 'supervisor_staff';
+
+      /** Supervisor portal has no Tickets tab — take precedence over facility when both accesses exist. */
+      if (hasSupervisorAccess && isSupervisorUserType) {
+        router.replace('/supervisor');
+      } else if (hasFacilityAccess || utLower === 'facility' || utLower === 'facility_staff') {
+        const branch = await resolveFacilityBranchPath(
+          {
+            id: userData.id,
+            user_type: userData.user_type,
+            record_id: userData.record_id,
+            auth_id: userData.auth_id,
+          },
+          authData.user.id,
+          (userAccessData || []) as UserAccessRow[]
+        );
+        router.replace(branch as any);
+      } else if (hasSupervisorAccess || utLower === 'supervisor' || utLower === 'supervisor_staff') {
         router.replace('/supervisor');
       } else {
         router.replace('/');

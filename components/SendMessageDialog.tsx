@@ -7,7 +7,8 @@ import { ThemedText } from '@/components/themed-text';
 interface SendMessageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  supervisorId: string;
+  supervisorId?: string;      // supervisor context (school staff)
+  facilityId?: string;        // facility context (kindergarten)
   selectedChildIds: string[];
 }
 
@@ -18,7 +19,7 @@ interface Recipient {
   childNames: string[];
 }
 
-export default function SendMessageDialog({ open, onOpenChange, supervisorId, selectedChildIds }: SendMessageDialogProps) {
+export default function SendMessageDialog({ open, onOpenChange, supervisorId, facilityId, selectedChildIds }: SendMessageDialogProps) {
   const [step, setStep] = useState<'compose' | 'sending' | 'success'>('compose');
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [loadingRecipients, setLoadingRecipients] = useState(false);
@@ -167,15 +168,23 @@ export default function SendMessageDialog({ open, onOpenChange, supervisorId, se
       }
 
       if (!targetThreadId) {
-         // Create new thread
+         // Create new thread - use facility_id for kindergarten context, supervisor_id for school context
+         const threadInsert: any = {
+           scope: 'direct',
+           created_by: senderId,
+           is_group: false,
+         };
+         if (facilityId) {
+           threadInsert.facility_id = facilityId;
+         } else if (supervisorId) {
+           threadInsert.supervisor_id = supervisorId;
+         } else {
+           throw new Error('Missing supervisor or facility context for message thread');
+         }
+
          const { data: newThread, error: createError } = await supabase
            .from('msg_threads')
-           .insert({
-             supervisor_id: supervisorId,
-             scope: 'direct',
-             created_by: senderId,
-             is_group: false
-           })
+           .insert(threadInsert)
            .select('id')
            .single();
            

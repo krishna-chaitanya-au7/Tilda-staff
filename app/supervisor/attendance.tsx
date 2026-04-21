@@ -18,6 +18,7 @@ import AttendanceEventDialog, { AttendanceEventType } from '@/components/Attenda
 interface Facility {
   id: string;
   name: string;
+  facility_type?: string | null;
 }
 
 interface ChildAttendance {
@@ -65,6 +66,7 @@ interface SupervisorGroup {
   facility_id: string;
   day: string;
 }
+
 
 // --- Components ---
 
@@ -152,7 +154,8 @@ const ChildAttendanceRow = React.memo(({
   onViewChild,
   onViewParent,
   getGroup,
-  onShowOptions
+  onShowOptions,
+  compactKindergartenLayout = false,
 }: any) => {
   const hasMeal = mealSelection && !mealSelection.is_deleted && !mealSelection.is_skipped;
   const mealName = hasMeal ? mealSelection?.menuline?.name || 'Menu' : '-';
@@ -171,20 +174,35 @@ const ChildAttendanceRow = React.memo(({
           />
       </TouchableOpacity>
 
-      <View style={{ flex: 2 }}>
+      <View style={{ flex: compactKindergartenLayout ? 3 : 2 }}>
          <Text style={styles.nameText}>{item.family_name}, {item.first_name}</Text>
-         <Text style={styles.subText}>{getGroup(item)}</Text>
-         {selectedFacility === 'all' && facilityName ? (
-           <Text style={styles.facilityText}>{facilityName}</Text>
-         ) : null}
+         {compactKindergartenLayout ? (
+           <>
+             {item.children_info?.class ? (
+               <Text style={styles.subText}>Klasse {item.children_info.class}</Text>
+             ) : null}
+             {selectedFacility === 'all' && facilityName ? (
+               <Text style={styles.facilityText}>{facilityName}</Text>
+             ) : null}
+           </>
+         ) : (
+           <>
+             <Text style={styles.subText}>{getGroup(item)}</Text>
+             {selectedFacility === 'all' && facilityName ? (
+               <Text style={styles.facilityText}>{facilityName}</Text>
+             ) : null}
+           </>
+         )}
          {item.is_leave && <View style={styles.badgeRed}><Text style={styles.badgeTextRed}>Krank</Text></View>}
       </View>
 
-      <View style={{ flex: 1 }}>
-         <Text style={styles.cellText}>{item.children_info?.class || '-'}</Text>
-      </View>
+      {!compactKindergartenLayout && (
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cellText}>{item.children_info?.class || '-'}</Text>
+        </View>
+      )}
 
-      <View style={{ flex: 1.5 }}>
+      <View style={{ flex: compactKindergartenLayout ? 2 : 1.5 }}>
          <Text style={[styles.cellText, hasAllergy && { color: '#D32F2F', fontWeight: 'bold' }]}>
            {mealName} {hasAllergy && '!'}
          </Text>
@@ -347,6 +365,17 @@ export default function SupervisorAttendanceScreen() {
   // Sorting
   const [sortCol, setSortCol] = useState<'name' | 'class' | 'lunch' | 'status'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // Kindergarten-specific layout flag
+  const isKindergartenStaff = useMemo(() => {
+    if (!facilities.length) return false;
+    return facilities.every((f) => {
+      const t = (f as any).facility_type;
+      if (!t) return false;
+      const norm = String(t).toLowerCase();
+      return norm.includes('kita') || norm.includes('kindergarten');
+    });
+  }, [facilities]);
 
   // Options & Events
   const [optionsModalVisible, setOptionsModalVisible] = useState(false);
@@ -548,7 +577,7 @@ export default function SupervisorAttendanceScreen() {
         if (allIds.length > 0) {
           const { data: allFacilities } = await supabase
             .from('facilities')
-            .select('id, name')
+            .select('id, name, facility_type')
             .in('id', allIds)
             .eq('is_deleted', false);
           
@@ -782,8 +811,14 @@ export default function SupervisorAttendanceScreen() {
     children.filter(c => hasSupervisionToday(c)).forEach(c => {
       if (c.children_info?.class) classes.add(c.children_info.class);
     });
-    setAvailableClasses(Array.from(classes).sort());
-  }, [children, selectedDate]);
+    const sorted = Array.from(classes).sort();
+    setAvailableClasses(sorted);
+
+    // Kindergarten: default to a single class view if possible
+    if (isKindergartenStaff && sorted.length > 0 && (classFilter === 'all' || !sorted.includes(classFilter))) {
+      setClassFilter(sorted[0]);
+    }
+  }, [children, selectedDate, isKindergartenStaff, classFilter]);
 
   useEffect(() => {
     setGroupFilter('all');
@@ -1075,9 +1110,10 @@ export default function SupervisorAttendanceScreen() {
          onViewParent={handleViewParent}
          getGroup={getGroup}
          onShowOptions={handleShowOptions}
+         compactKindergartenLayout={isKindergartenStaff}
       />
     );
-  }, [selectedIds, mealSelections, attendanceRecords, facilities, selectedFacility, getGroup]);
+  }, [selectedIds, mealSelections, attendanceRecords, facilities, selectedFacility, getGroup, isKindergartenStaff]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -1259,10 +1295,12 @@ export default function SupervisorAttendanceScreen() {
               <View style={{ width: 40 }} /> 
               
               <TouchableOpacity 
-                style={{ flex: 2, flexDirection: 'row', alignItems: 'center' }}
+                style={{ flex: isKindergartenStaff ? 3 : 2, flexDirection: 'row', alignItems: 'center' }}
                 onPress={() => handleSort('name')}
               >
-                <Text style={styles.headerCell}>Name / Gruppe</Text>
+                <Text style={styles.headerCell}>
+                  {isKindergartenStaff ? 'Name' : 'Name / Gruppe'}
+                </Text>
                 <Ionicons 
                   name={sortCol === 'name' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
                   size={12} 
@@ -1271,21 +1309,23 @@ export default function SupervisorAttendanceScreen() {
                 />
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-                onPress={() => handleSort('class')}
-              >
-                <Text style={styles.headerCell}>Klasse</Text>
-                <Ionicons 
-                  name={sortCol === 'class' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
-                  size={12} 
-                  color={sortCol === 'class' ? "#000" : "#ccc"} 
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
+              {!isKindergartenStaff && (
+                <TouchableOpacity 
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('class')}
+                >
+                  <Text style={styles.headerCell}>Klasse</Text>
+                  <Ionicons 
+                    name={sortCol === 'class' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
+                    size={12} 
+                    color={sortCol === 'class' ? "#000" : "#ccc"} 
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity 
-                style={{ flex: 1.5, flexDirection: 'row', alignItems: 'center' }}
+                style={{ flex: isKindergartenStaff ? 2 : 1.5, flexDirection: 'row', alignItems: 'center' }}
                 onPress={() => handleSort('lunch')}
               >
                 <Text style={styles.headerCell}>Essen</Text>

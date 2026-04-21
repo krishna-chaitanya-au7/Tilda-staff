@@ -12,6 +12,7 @@ export default function SupervisorTabLayout() {
 
   return (
     <Tabs
+      initialRouteName="attendance"
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
@@ -19,73 +20,59 @@ export default function SupervisorTabLayout() {
         tabBarBackground: TabBarBackground,
         tabBarStyle: Platform.select({
           ios: {
-            // Use a transparent background on iOS to show the blur effect
             position: 'absolute',
           },
           default: {},
         }),
       }}
     >
+      <Tabs.Screen name="index" options={{ href: null }} />
+      <Tabs.Screen name="grouping" options={{ href: null }} />
+      <Tabs.Screen name="qr-requests" options={{ href: null }} />
+      <Tabs.Screen name="groups-settings" options={{ href: null }} />
+      <Tabs.Screen name="messages" options={{ href: null }} />
       <Tabs.Screen
-        name="index"
+        name="mensa"
         options={{
-          title: 'Übersicht',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="rectangle.grid.2x2.fill" color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="grouping"
-        options={{
-          title: 'Klassen',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="person.3.fill" color={color} />
-          ),
+          title: 'Mensa',
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="fork.knife" color={color} />,
         }}
       />
       <Tabs.Screen
         name="attendance"
         options={{
           title: 'Anwesenheit',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="checklist" color={color} />
-          ),
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="checklist" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="qr-requests"
+        name="calendar"
         options={{
-          title: 'QR Karten',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="qrcode" color={color} />
-          ),
+          title: 'Kalender',
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="calendar" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="messages"
+        name="messaging"
         options={{
-          title: 'Nachrichten',
+          title: 'Messenger',
           tabBarIcon: ({ color }) => (
             <IconSymbol size={24} name="bubble.left.and.bubble.right.fill" color={color} />
           ),
         }}
       />
       <Tabs.Screen
+        name="notifications"
+        options={{
+          title: 'Mitteilungen',
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="bell.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profil',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="person.fill" color={color} />
-          ),
-        }}
-      />
-      
-      {/* Hidden Tabs */}
-      <Tabs.Screen
-        name="groups-settings"
-        options={{
-          href: null,
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="person.fill" color={color} />,
         }}
       />
     </Tabs>

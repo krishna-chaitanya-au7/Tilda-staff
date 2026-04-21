@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { getFacilitySettingsForYear } from '@/lib/facility-settings-resolver';
 
 // Dashboard Card Component
 const DashboardCard = ({ title, value, icon, color, bgColor, onPress }: any) => (
@@ -121,17 +122,24 @@ export default function SupervisorDashboardScreen() {
             
           const uniqueUsers = new Set(childrenUsers?.map(c => c.user_id) || []);
           
-          // Groups (Classes)
-          const { data: facilitiesData } = await supabase
-            .from('facilities')
-            .select('facility_settings')
-            .in('id', allFacilityIds);
-            
+          // Groups (Classes) with year-based settings source:
+          // academic_year === 1 -> facilities, else -> facility_year_settings
           let groupCount = 0;
-          facilitiesData?.forEach((f: any) => {
-             if (f.facility_settings?.classes) {
-                groupCount += f.facility_settings.classes.length;
-             }
+          const resolvedSettings = await Promise.all(
+            allFacilityIds.map(async (fid) => {
+              try {
+                return await getFacilitySettingsForYear(fid, ayId);
+              } catch (e) {
+                console.warn('[SupervisorDashboard] facility settings resolve failed', fid, e);
+                return { facility_settings: {}, source: 'facility_year_settings' as const };
+              }
+            })
+          );
+          resolvedSettings.forEach((row) => {
+            const classes = row?.facility_settings?.classes;
+            if (Array.isArray(classes)) {
+              groupCount += classes.length;
+            }
           });
 
           // Tickets (New)

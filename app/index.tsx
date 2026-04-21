@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { resolveFacilityBranchPath, type UserAccessRow } from '@/lib/facilityPermissions';
 
 export default function Index() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export default function Index() {
       // 2. Fetch user details to determine role/access
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('user_type, id')
+        .select('user_type, id, record_id, auth_id')
         .eq('auth_id', session.user.id)
         .single();
 
@@ -47,14 +48,25 @@ export default function Index() {
         (access: any) => access.resource_type === 'supervisor'
       );
 
-      // 4. Redirect based on role
-      if (hasFacilityAccess || userType === 'facility' || userType === 'facility_staff') {
-        router.replace('/facility');
-      } else if (
-        hasSupervisorAccess ||
-        userType === 'supervisor' ||
-        userType === 'supervisor_staff'
-      ) {
+      const utLower = String(userType).toLowerCase();
+      const isSupervisorUserType = utLower === 'supervisor' || utLower === 'supervisor_staff';
+
+      // 4. Redirect based on role (supervisor branch first: no Tickets tab there)
+      if (hasSupervisorAccess && isSupervisorUserType) {
+        router.replace('/supervisor');
+      } else if (hasFacilityAccess || utLower === 'facility' || utLower === 'facility_staff') {
+        const branch = await resolveFacilityBranchPath(
+          {
+            id: userData.id,
+            user_type: userData.user_type,
+            record_id: userData.record_id,
+            auth_id: userData.auth_id,
+          },
+          session.user.id,
+          (userAccessData || []) as UserAccessRow[]
+        );
+        router.replace(branch as any);
+      } else if (hasSupervisorAccess || utLower === 'supervisor' || utLower === 'supervisor_staff') {
         router.replace('/supervisor');
       } else {
         // Valid user but no specific portal access - go to login or a generic page
