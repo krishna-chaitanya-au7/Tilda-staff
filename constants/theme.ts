@@ -5,7 +5,7 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
+const tintColorLight = '#111827';
 const tintColorDark = '#fff';
 
 /** Extra padding below the status bar so main screen titles line up across facility tabs. */

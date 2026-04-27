@@ -9,6 +9,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import AttendanceLogsPanel from '@/components/AttendanceLogsPanel';
 import SendMessageDialog from '@/components/SendMessageDialog';
 import AttendanceEventDialog, { AttendanceEventType } from '@/components/AttendanceEventDialog';
@@ -85,7 +86,7 @@ const StatusOptionsModal = ({ visible, onClose, onSelect, currentStatus }: { vis
              <Text style={styles.modalItemText}>Früher gegangen</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.modalItem, { borderTopWidth: 1, borderTopColor: '#eee' }]} onPress={() => onSelect('reset')}>
-             <Text style={[styles.modalItemText, { color: '#F44336' }]}>Zurücksetzen (Pending)</Text>
+             <Text style={[styles.modalItemText, { color: '#111827' }]}>Zurücksetzen (Pending)</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -142,12 +143,326 @@ const StatsCard = ({ title, value, color = '#000', bgColor = '#F5F5F5', showInfo
   </View>
 );
 
-const ChildAttendanceRow = React.memo(({ 
-  item, 
-  isSelected, 
-  attendanceRecord, 
-  mealSelection, 
-  facilityName, 
+const ChildAttendanceMobileCard = React.memo(({
+  item,
+  isSelected,
+  attendanceRecord,
+  mealSelection,
+  facilityName,
+  selectedFacility,
+  onToggleSelection,
+  onStatusUpdate,
+  onViewChild,
+  onViewParent,
+  getGroup,
+  onShowOptions,
+}: any) => {
+  const hasMeal = mealSelection && !mealSelection.is_deleted && !mealSelection.is_skipped;
+  const mealName = hasMeal ? mealSelection?.menuline?.name || 'Menu' : null;
+  const hasAllergy = hasMeal && (mealSelection?.main_meal_allergy || mealSelection?.starter_allergy || mealSelection?.dessert_allergy);
+  const status = attendanceRecord?.status;
+  const onLeave = attendanceRecord?.is_leave;
+  const initials = `${(item.first_name || '')[0] || ''}${(item.family_name || '')[0] || ''}`.toUpperCase();
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => onToggleSelection(item.id)}
+      onLongPress={() => onViewChild(item.id, item.children_info?.facility_id)}
+      style={[mobileStyles.card, isSelected && mobileStyles.cardSelected]}
+    >
+      <View style={mobileStyles.avatar}>
+        <Text style={mobileStyles.avatarText}>{initials || '?'}</Text>
+      </View>
+
+      <View style={mobileStyles.body}>
+        <Text style={mobileStyles.name} numberOfLines={1}>
+          {item.first_name} {item.family_name}
+        </Text>
+        <View style={mobileStyles.metaRow}>
+          {item.children_info?.class ? (
+            <Text style={mobileStyles.metaText}>Klasse {item.children_info.class}</Text>
+          ) : null}
+          {getGroup && getGroup(item) ? (
+            <Text style={mobileStyles.metaText}>· {getGroup(item)}</Text>
+          ) : null}
+          {selectedFacility === 'all' && facilityName ? (
+            <Text style={[mobileStyles.metaText, { color: '#111827' }]}>· {facilityName}</Text>
+          ) : null}
+        </View>
+        <View style={mobileStyles.badgeRow}>
+          {item.is_leave ? (
+            <View style={[mobileStyles.pill, { backgroundColor: '#F1F5F9' }]}>
+              <Text style={[mobileStyles.pillText, { color: '#111827' }]}>Krank</Text>
+            </View>
+          ) : null}
+          {mealName ? (
+            <View style={[mobileStyles.pill, { backgroundColor: hasAllergy ? '#F1F5F9' : '#F1F5F9' }]}>
+              <Ionicons name="restaurant" size={11} color={hasAllergy ? '#111827' : '#64748B'} />
+              <Text style={[mobileStyles.pillText, { color: hasAllergy ? '#111827' : '#334155' }]} numberOfLines={1}>
+                {mealName}{hasAllergy ? ' !' : ''}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={mobileStyles.actions}>
+        {onLeave ? (
+          <View style={[mobileStyles.statusBtn, { backgroundColor: '#F1F5F9' }]}>
+            <Text style={[mobileStyles.statusBtnText, { color: '#111827' }]}>Urlaub</Text>
+          </View>
+        ) : status && status !== 'Pending' ? (
+          <TouchableOpacity
+            onPress={(e) => { e.stopPropagation?.(); onShowOptions(item.id); }}
+            style={[mobileStyles.statusBtn, { backgroundColor: status === 'Present' ? '#F1F5F9' : '#F1F5F9' }]}
+          >
+            <Text style={[mobileStyles.statusBtnText, { color: status === 'Present' ? '#111827' : '#111827' }]}>
+              {status === 'Present' ? 'Da' : 'Fehlt'}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={status === 'Present' ? '#111827' : '#111827'} />
+          </TouchableOpacity>
+        ) : (
+          <View style={mobileStyles.quickStatus}>
+            <TouchableOpacity
+              onPress={(e) => { e.stopPropagation?.(); onStatusUpdate(item.id, 'Present'); }}
+              style={mobileStyles.quickBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="checkmark-circle" size={30} color="#4CAF50" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={(e) => { e.stopPropagation?.(); onStatusUpdate(item.id, 'Absent'); }}
+              style={mobileStyles.quickBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="close-circle" size={30} color="#F44336" />
+            </TouchableOpacity>
+          </View>
+        )}
+        {isSelected ? (
+          <Ionicons name="checkmark-circle" size={16} color="#111827" style={{ marginTop: 6 }} />
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    contentContainerStyle={mobileStyles.statStripContent}
+    style={mobileStyles.statStrip}
+  >
+    <View style={[mobileStyles.statPill, { backgroundColor: '#E3F2FD' }]}>
+      <Text style={[mobileStyles.statPillValue, { color: '#1565C0' }]}>{stats.total}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#1565C0' }]}>Betreuung</Text>
+    </View>
+    <View style={[mobileStyles.statPill, { backgroundColor: '#E8F5E9' }]}>
+      <Text style={[mobileStyles.statPillValue, { color: '#2E7D32' }]}>{stats.active}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#2E7D32' }]}>Heute</Text>
+    </View>
+    <TouchableOpacity
+      onPress={stats.sick > 0 ? onInfoPressSick : undefined}
+      activeOpacity={stats.sick > 0 ? 0.7 : 1}
+      style={[mobileStyles.statPill, { backgroundColor: '#FFEBEE' }]}
+    >
+      <Text style={[mobileStyles.statPillValue, { color: '#C62828' }]}>{stats.sick}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#C62828' }]}>Krank</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      onPress={stats.bus > 0 ? onInfoPressBus : undefined}
+      activeOpacity={stats.bus > 0 ? 0.7 : 1}
+      style={[mobileStyles.statPill, { backgroundColor: '#FFF3E0' }]}
+    >
+      <Text style={[mobileStyles.statPillValue, { color: '#EF6C00' }]}>{stats.bus}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#EF6C00' }]}>Bus</Text>
+    </TouchableOpacity>
+  </ScrollView>
+);
+
+const mobileStyles = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginHorizontal: 8,
+    marginVertical: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  cardSelected: {
+    borderColor: '#111827',
+    backgroundColor: '#F8FAFC',
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  body: {
+    flex: 1,
+    minWidth: 0,
+  },
+  name: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 2,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 6,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  pillText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  actions: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  statusBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minWidth: 72,
+    justifyContent: 'center',
+  },
+  statusBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  quickStatus: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  quickBtn: {
+    padding: 2,
+  },
+  statStrip: {
+    marginBottom: 12,
+  },
+  statStripContent: {
+    paddingHorizontal: 8,
+    gap: 8,
+  },
+  statPill: {
+    minWidth: 84,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  statPillValue: {
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  statPillLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+});
+
+const supMobileNav = StyleSheet.create({
+  dateNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginHorizontal: 8,
+  },
+  chevBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  dateText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  msgBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#111827',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  msgBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+});
+
+const ChildAttendanceRow = React.memo(({
+  item,
+  isSelected,
+  attendanceRecord,
+  mealSelection,
+  facilityName,
   selectedFacility,
   onToggleSelection,
   onStatusUpdate,
@@ -170,7 +485,7 @@ const ChildAttendanceRow = React.memo(({
           <Ionicons 
               name={isSelected ? "checkbox" : "square-outline"} 
               size={24} 
-              color={isSelected ? "#007AFF" : "#ccc"} 
+              color={isSelected ? "#111827" : "#ccc"} 
           />
       </TouchableOpacity>
 
@@ -203,14 +518,14 @@ const ChildAttendanceRow = React.memo(({
       )}
 
       <View style={{ flex: compactKindergartenLayout ? 2 : 1.5 }}>
-         <Text style={[styles.cellText, hasAllergy && { color: '#D32F2F', fontWeight: 'bold' }]}>
+         <Text style={[styles.cellText, hasAllergy && { color: '#111827', fontWeight: 'bold' }]}>
            {mealName} {hasAllergy && '!'}
          </Text>
       </View>
 
       <View style={styles.actions}>
          {attendanceRecord?.is_leave ? (
-            <Text style={{ color: '#C62828', fontSize: 12 }}>On Leave</Text>
+            <Text style={{ color: '#111827', fontSize: 12 }}>On Leave</Text>
          ) : attendanceRecord?.status && attendanceRecord.status !== 'Pending' ? (
            <TouchableOpacity 
              onPress={() => onShowOptions(item.id)} 
@@ -222,7 +537,7 @@ const ChildAttendanceRow = React.memo(({
               <Ionicons 
                 name="chevron-down" 
                 size={12} 
-                color={attendanceRecord.status === 'Absent' ? '#D32F2F' : '#2E7D32'} 
+                color={attendanceRecord.status === 'Absent' ? '#111827' : '#111827'} 
               />
            </TouchableOpacity>
          ) : (
@@ -273,29 +588,29 @@ const AttendanceDashboard = React.memo(({
             {/* Stats Grid */}
             <View style={[styles.statsContainer, isLandscape && { flex: 1.1, marginRight: 16 }]}>
               <View style={styles.statsGrid}>
-                <StatsCard 
-                  title="Kinder mit Betreuung" 
-                  value={stats.total} 
-                  bgColor="#E3F2FD" color="#1565C0" 
+                <StatsCard
+                  title="Kinder mit Betreuung"
+                  value={stats.total}
+                  bgColor="#E3F2FD" color="#1565C0"
                   style={{ width: '48%', minHeight: 140 }}
                 />
-                <StatsCard 
-                  title="Kinder Heute (ohne Krank)" 
-                  value={stats.active} 
-                  bgColor="#E8F5E9" color="#2E7D32" 
+                <StatsCard
+                  title="Kinder Heute (ohne Krank)"
+                  value={stats.active}
+                  bgColor="#E8F5E9" color="#2E7D32"
                   style={{ width: '48%', minHeight: 140 }}
                 />
-                <StatsCard 
-                  title="Kinder Krank Heute" 
-                  value={stats.sick} 
-                  bgColor="#FFEBEE" color="#C62828" 
+                <StatsCard
+                  title="Kinder Krank Heute"
+                  value={stats.sick}
+                  bgColor="#FFEBEE" color="#C62828"
                   showInfoIcon={stats.sick > 0}
                   onInfoPress={onInfoPressSick}
                   style={{ width: '48%', minHeight: 140 }}
                 />
-                <StatsCard 
-                  title="Bus Kinder Heute" 
-                  value={stats.bus} 
+                <StatsCard
+                  title="Bus Kinder Heute"
+                  value={stats.bus}
                   bgColor="#FFF3E0" color="#EF6C00"
                   showInfoIcon={stats.bus > 0}
                   onInfoPress={onInfoPressBus}
@@ -329,6 +644,8 @@ export default function SupervisorAttendanceScreen() {
   const { width } = useWindowDimensions();
   const router = useRouter();
   const isLandscape = width > 768;
+  const isMobile = useIsMobile();
+  const statsCardMinHeight = isMobile ? 92 : 140;
 
   const [loading, setLoading] = useState(true);
   
@@ -1096,8 +1413,27 @@ export default function SupervisorAttendanceScreen() {
     const facilityName = getFacilityName(item.children_info?.facility_id);
     const isSelected = selectedIds.has(item.id);
 
+    if (isMobile) {
+      return (
+        <ChildAttendanceMobileCard
+          item={item}
+          isSelected={isSelected}
+          attendanceRecord={att}
+          mealSelection={meal}
+          facilityName={facilityName}
+          selectedFacility={selectedFacility}
+          onToggleSelection={toggleSelection}
+          onStatusUpdate={handleStatusUpdate}
+          onViewChild={handleViewChild}
+          onViewParent={handleViewParent}
+          getGroup={getGroup}
+          onShowOptions={handleShowOptions}
+        />
+      );
+    }
+
     return (
-      <ChildAttendanceRow 
+      <ChildAttendanceRow
          item={item}
          isSelected={isSelected}
          attendanceRecord={att}
@@ -1113,19 +1449,21 @@ export default function SupervisorAttendanceScreen() {
          compactKindergartenLayout={isKindergartenStaff}
       />
     );
-  }, [selectedIds, mealSelections, attendanceRecords, facilities, selectedFacility, getGroup, isKindergartenStaff]);
+  }, [selectedIds, mealSelections, attendanceRecords, facilities, selectedFacility, getGroup, isKindergartenStaff, isMobile]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Fixed Header: Title & Facility */}
-      <View style={styles.fixedHeader}>
-        <Text style={styles.title}>Ganztag</Text>
-        <View style={styles.facilityContextRow}>
-            <Text style={styles.facilityContextText}>
-            Facility : {selectedFacility === 'all' ? 'Alle Einrichtungen' : getFacilityName(selectedFacility || undefined)}
-            </Text>
+      {/* Fixed Header: Title & Facility (tablet only) */}
+      {!isMobile && (
+        <View style={styles.fixedHeader}>
+          <Text style={styles.title}>Ganztag</Text>
+          <View style={styles.facilityContextRow}>
+              <Text style={styles.facilityContextText} numberOfLines={1}>
+              {selectedFacility === 'all' ? 'Alle Einrichtungen' : getFacilityName(selectedFacility || undefined)}
+              </Text>
+          </View>
         </View>
-      </View>
+      )}
 
       <FlatList
         data={loading ? [] : filteredData}
@@ -1137,6 +1475,16 @@ export default function SupervisorAttendanceScreen() {
         removeClippedSubviews={false}
         ListHeaderComponent={
           <View>
+            {isMobile && (
+              <View style={{ paddingTop: 8, paddingBottom: 4, paddingHorizontal: 14 }}>
+                <Text style={[styles.title, { fontSize: 18, marginBottom: 0 }]}>Ganztag</Text>
+                <View style={styles.facilityContextRow}>
+                  <Text style={[styles.facilityContextText, { fontSize: 12 }]} numberOfLines={1}>
+                    {selectedFacility === 'all' ? 'Alle Einrichtungen' : getFacilityName(selectedFacility || undefined)}
+                  </Text>
+                </View>
+              </View>
+            )}
             {/* Header Container */}
             <View style={styles.header}>
               
@@ -1157,118 +1505,183 @@ export default function SupervisorAttendanceScreen() {
               )}
 
               {/* Stats & Logs */}
-              <View style={[styles.dashboardRow, isLandscape && styles.dashboardRowLandscape]}>
-                {/* Stats Grid - Reduced width relative to logs */}
-                <View style={[styles.statsContainer, isLandscape && { flex: 1.1, marginRight: 16 }]}>
-                  <View style={styles.statsGrid}>
-                    <StatsCard 
-                      title="Kinder mit Betreuung" 
-                      value={stats.total} 
-                      bgColor="#E3F2FD" color="#1565C0" 
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
-                    <StatsCard 
-                      title="Kinder Heute (ohne Krank)" 
-                      value={stats.active} 
-                      bgColor="#E8F5E9" color="#2E7D32" 
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
-                    <StatsCard 
-                      title="Kinder Krank Heute" 
-                      value={stats.sick} 
-                      bgColor="#FFEBEE" color="#C62828" 
-                      showInfoIcon={stats.sick > 0}
-                      onInfoPress={() => Alert.alert('Kranke Kinder', children.filter(c => hasSupervisionToday(c) && isSickLeave(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n'))}
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
-                    <StatsCard 
-                      title="Bus Kinder Heute" 
-                      value={stats.bus} 
-                      bgColor="#FFF3E0" color="#EF6C00"
-                      showInfoIcon={stats.bus > 0}
-                      onInfoPress={() => Alert.alert('Bus Kinder', children.filter(c => hasSupervisionToday(c) && isBusChild(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n'))}
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
+              {isMobile ? (
+                <>
+                  <MobileStatsStrip
+                    stats={stats}
+                    onInfoPressSick={() => Alert.alert('Kranke Kinder', children.filter(c => hasSupervisionToday(c) && isSickLeave(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n') || 'Keine')}
+                    onInfoPressBus={() => Alert.alert('Bus Kinder', children.filter(c => hasSupervisionToday(c) && isBusChild(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n') || 'Keine')}
+                  />
+                  {currentAcademicYear && (
+                    <View style={{ marginHorizontal: 8, marginTop: 4, marginBottom: 8 }}>
+                      <AttendanceLogsPanel
+                        selectedAcademicYearId={currentAcademicYear}
+                        selectedFacilityId={selectedFacility || 'all'}
+                        selectedDate={format(selectedDate, 'yyyy-MM-dd')}
+                        supervisorId={supervisorId}
+                        isCoordinator={isCoordinator}
+                        accessibleFacilities={accessibleFacilities}
+                      />
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={[styles.dashboardRow, isLandscape && styles.dashboardRowLandscape]}>
+                  {/* Stats Grid - Reduced width relative to logs */}
+                  <View style={[styles.statsContainer, isLandscape && { flex: 1.1, marginRight: 16 }]}>
+                    <View style={styles.statsGrid}>
+                      <StatsCard
+                        title="Kinder mit Betreuung"
+                        value={stats.total}
+                        bgColor="#E3F2FD" color="#1565C0"
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                      <StatsCard
+                        title="Kinder Heute (ohne Krank)"
+                        value={stats.active}
+                        bgColor="#E8F5E9" color="#2E7D32"
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                      <StatsCard
+                        title="Kinder Krank Heute"
+                        value={stats.sick}
+                        bgColor="#FFEBEE" color="#C62828"
+                        showInfoIcon={stats.sick > 0}
+                        onInfoPress={() => Alert.alert('Kranke Kinder', children.filter(c => hasSupervisionToday(c) && isSickLeave(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n'))}
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                      <StatsCard
+                        title="Bus Kinder Heute"
+                        value={stats.bus}
+                        bgColor="#FFF3E0" color="#EF6C00"
+                        showInfoIcon={stats.bus > 0}
+                        onInfoPress={() => Alert.alert('Bus Kinder', children.filter(c => hasSupervisionToday(c) && isBusChild(c)).map(c => `${c.first_name} ${c.family_name}`).join('\n'))}
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Logs Panel - Increased width */}
+                  <View style={[styles.logsContainer, isLandscape && { flex: 1 }]}>
+                    {currentAcademicYear && (
+                      <AttendanceLogsPanel
+                        selectedAcademicYearId={currentAcademicYear}
+                        selectedFacilityId={selectedFacility || 'all'}
+                        selectedDate={format(selectedDate, 'yyyy-MM-dd')}
+                        supervisorId={supervisorId}
+                        isCoordinator={isCoordinator}
+                        accessibleFacilities={accessibleFacilities}
+                      />
+                    )}
                   </View>
                 </View>
-
-                {/* Logs Panel - Increased width */}
-                <View style={[styles.logsContainer, isLandscape && { flex: 1 }]}>
-                  {currentAcademicYear && (
-                    <AttendanceLogsPanel 
-                      selectedAcademicYearId={currentAcademicYear}
-                      selectedFacilityId={selectedFacility || 'all'}
-                      selectedDate={format(selectedDate, 'yyyy-MM-dd')}
-                      supervisorId={supervisorId}
-                      isCoordinator={isCoordinator}
-                      accessibleFacilities={accessibleFacilities}
-                    />
-                  )}
-                </View>
-              </View>
+              )}
 
               {/* Navigation Row: Anwesenheit Title + Date + Message Button */}
               <View style={styles.navigationSection}>
-                  {/* Row 1: Title & Message Button */}
-                  <View style={styles.titleRow}>
-                      <Text style={styles.sectionTitle}>Anwesenheit</Text>
-                      <TouchableOpacity 
-                        style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
-                        disabled={selectedIds.size === 0}
-                        onPress={() => setSendMessageOpen(true)}
-                      >
-                          <Ionicons name="mail-outline" size={18} color="#fff" />
-                          <Text style={styles.messageButtonText}>Nachricht senden</Text>
-                      </TouchableOpacity>
-                  </View>
-                  
-                  {/* Row 2: Date Controls */}
-                  <View style={styles.dateControls}>
-                    <TouchableOpacity onPress={() => setSelectedDate(subDays(selectedDate, 1))} style={styles.navButton}>
-                      <Ionicons name="chevron-back" size={20} color="#333" />
-                      <Text style={styles.navButtonText}>Vorheriger Tag</Text>
-                    </TouchableOpacity>
-                    
-                    <Text style={styles.dateDisplay}>
-                      {(() => {
-                        const date = new Date(selectedDate);
-                        const dayNames = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
-                        const dayName = dayNames[date.getDay()];
-                        const formattedDate = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                        return `${dayName}, ${formattedDate}`;
-                      })()}
-                    </Text>
+                  {isMobile ? (
+                    <>
+                      <View style={supMobileNav.dateNavRow}>
+                        <TouchableOpacity
+                          onPress={() => setSelectedDate(subDays(selectedDate, 1))}
+                          style={supMobileNav.chevBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="chevron-back" size={22} color="#0F172A" />
+                        </TouchableOpacity>
+                        <Text style={supMobileNav.dateText} numberOfLines={1}>
+                          {(() => {
+                            const date = new Date(selectedDate);
+                            const short = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+                            const dayName = short[date.getDay()];
+                            const formattedDate = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                            return `${dayName}, ${formattedDate}`;
+                          })()}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => setSelectedDate(addDays(selectedDate, 1))}
+                          style={supMobileNav.chevBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="chevron-forward" size={22} color="#0F172A" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={supMobileNav.sectionTitleRow}>
+                        <Text style={supMobileNav.sectionTitle}>
+                          Anwesenheit {selectedIds.size > 0 ? `· ${selectedIds.size}` : ''}
+                        </Text>
+                        <TouchableOpacity
+                          style={[supMobileNav.msgBtn, selectedIds.size === 0 && { opacity: 0.4 }]}
+                          disabled={selectedIds.size === 0}
+                          onPress={() => setSendMessageOpen(true)}
+                        >
+                          <Ionicons name="mail-outline" size={16} color="#fff" />
+                          <Text style={supMobileNav.msgBtnText}>Senden</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.titleRow}>
+                          <Text style={styles.sectionTitle}>Anwesenheit</Text>
+                          <TouchableOpacity
+                            style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
+                            disabled={selectedIds.size === 0}
+                            onPress={() => setSendMessageOpen(true)}
+                          >
+                              <Ionicons name="mail-outline" size={18} color="#fff" />
+                              <Text style={styles.messageButtonText}>Nachricht senden</Text>
+                          </TouchableOpacity>
+                      </View>
 
-                    <TouchableOpacity onPress={() => setSelectedDate(addDays(selectedDate, 1))} style={styles.navButton}>
-                      <Text style={styles.navButtonText}>Nächster Tag</Text>
-                      <Ionicons name="chevron-forward" size={20} color="#333" />
-                    </TouchableOpacity>
-                  </View>
+                      <View style={styles.dateControls}>
+                        <TouchableOpacity onPress={() => setSelectedDate(subDays(selectedDate, 1))} style={styles.navButton}>
+                          <Ionicons name="chevron-back" size={20} color="#333" />
+                          <Text style={styles.navButtonText}>Vorheriger Tag</Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.dateDisplay}>
+                          {(() => {
+                            const date = new Date(selectedDate);
+                            const dayNames = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+                            const dayName = dayNames[date.getDay()];
+                            const formattedDate = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                            return `${dayName}, ${formattedDate}`;
+                          })()}
+                        </Text>
+
+                        <TouchableOpacity onPress={() => setSelectedDate(addDays(selectedDate, 1))} style={styles.navButton}>
+                          <Text style={styles.navButtonText}>Nächster Tag</Text>
+                          <Ionicons name="chevron-forward" size={20} color="#333" />
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )}
               </View>
             </View>
 
             {/* Filters */}
-            <View style={styles.filterContainer}>
-              <View style={styles.searchBox}>
+            <View style={[styles.filterContainer, isMobile && { padding: 8, gap: 6, borderBottomWidth: 0 }]}>
+              <View style={[styles.searchBox, isMobile && { width: '100%', flex: 0 }]}>
                 <Ionicons name="search" size={16} color="#999" />
-                <TextInput 
-                  style={styles.searchInput} 
-                  placeholder="Suche..." 
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Suche..."
                   value={searchTerm}
                   onChangeText={setSearchTerm}
                 />
               </View>
 
-              <Dropdown 
+              <Dropdown
                 label="Gruppe"
                 value={groupFilter}
                 options={getFilteredGroupOptions()}
                 onSelect={(val) => setGroupFilter(val || 'all')}
-                style={{ width: 140 }}
+                style={isMobile ? { flex: 1, minWidth: 100 } : { width: 140 }}
               />
 
-              <Dropdown 
-                label="Status" 
+              <Dropdown
+                label="Status"
                 value={statusFilter}
                 options={[
                   { label: 'Alle Status', value: 'all' },
@@ -1278,79 +1691,120 @@ export default function SupervisorAttendanceScreen() {
                   { label: 'On Leave', value: 'on_leave' },
                 ]}
                 onSelect={(val) => setStatusFilter(val || 'all')}
-                style={{ width: 110 }}
+                style={isMobile ? { flex: 1, minWidth: 90 } : { width: 110 }}
               />
 
-              <Dropdown 
+              <Dropdown
                 label="Klasse"
                 value={classFilter}
                 options={[{ label: 'Alle Klassen', value: 'all' }, ...availableClasses.map(c => ({ label: c, value: c }))]}
                 onSelect={(val) => setClassFilter(val || 'all')}
-                style={{ width: 110 }}
+                style={isMobile ? { flex: 1, minWidth: 90 } : { width: 110 }}
               />
             </View>
 
             {/* Header Row */}
-            <View style={styles.tableHeader}>
-              <View style={{ width: 40 }} /> 
-              
-              <TouchableOpacity 
-                style={{ flex: isKindergartenStaff ? 3 : 2, flexDirection: 'row', alignItems: 'center' }}
-                onPress={() => handleSort('name')}
-              >
-                <Text style={styles.headerCell}>
-                  {isKindergartenStaff ? 'Name' : 'Name / Gruppe'}
-                </Text>
-                <Ionicons 
-                  name={sortCol === 'name' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
-                  size={12} 
-                  color={sortCol === 'name' ? "#000" : "#ccc"} 
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
-
-              {!isKindergartenStaff && (
-                <TouchableOpacity 
-                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-                  onPress={() => handleSort('class')}
+            {isMobile ? (
+              <View style={[styles.tableHeader, { paddingHorizontal: 14 }]}>
+                <TouchableOpacity
+                  style={{ flex: 2, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('name')}
                 >
-                  <Text style={styles.headerCell}>Klasse</Text>
-                  <Ionicons 
-                    name={sortCol === 'class' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
-                    size={12} 
-                    color={sortCol === 'class' ? "#000" : "#ccc"} 
+                  <Text style={styles.headerCell}>Name</Text>
+                  <Ionicons
+                    name={sortCol === 'name' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'name' ? '#000' : '#ccc'}
                     style={{ marginLeft: 4 }}
                   />
                 </TouchableOpacity>
-              )}
+                <TouchableOpacity
+                  style={{ flex: 1.5, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('lunch')}
+                >
+                  <Text style={styles.headerCell}>Essen</Text>
+                  <Ionicons
+                    name={sortCol === 'lunch' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'lunch' ? '#000' : '#ccc'}
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ width: 72, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('status')}
+                >
+                  <Text style={styles.headerCell}>Status</Text>
+                  <Ionicons
+                    name={sortCol === 'status' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'status' ? '#000' : '#ccc'}
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.tableHeader}>
+                <View style={{ width: 40 }} />
 
-              <TouchableOpacity 
-                style={{ flex: isKindergartenStaff ? 2 : 1.5, flexDirection: 'row', alignItems: 'center' }}
-                onPress={() => handleSort('lunch')}
-              >
-                <Text style={styles.headerCell}>Essen</Text>
-                <Ionicons 
-                  name={sortCol === 'lunch' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
-                  size={12} 
-                  color={sortCol === 'lunch' ? "#000" : "#ccc"} 
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: isKindergartenStaff ? 3 : 2, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('name')}
+                >
+                  <Text style={styles.headerCell}>
+                    {isKindergartenStaff ? 'Name' : 'Name / Gruppe'}
+                  </Text>
+                  <Ionicons
+                    name={sortCol === 'name' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'name' ? "#000" : "#ccc"}
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={{ width: 80, flexDirection: 'row', alignItems: 'center' }}
-                onPress={() => handleSort('status')}
-              >
-                <Text style={styles.headerCell}>Status</Text>
-                <Ionicons 
-                  name={sortCol === 'status' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'} 
-                  size={12} 
-                  color={sortCol === 'status' ? "#000" : "#ccc"} 
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
-              <Text style={[styles.headerCell, { width: 160, textAlign: 'center' }]}>Aktion</Text>
-            </View>
+                {!isKindergartenStaff && (
+                  <TouchableOpacity
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                    onPress={() => handleSort('class')}
+                  >
+                    <Text style={styles.headerCell}>Klasse</Text>
+                    <Ionicons
+                      name={sortCol === 'class' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                      size={12}
+                      color={sortCol === 'class' ? "#000" : "#ccc"}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={{ flex: isKindergartenStaff ? 2 : 1.5, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('lunch')}
+                >
+                  <Text style={styles.headerCell}>Essen</Text>
+                  <Ionicons
+                    name={sortCol === 'lunch' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'lunch' ? "#000" : "#ccc"}
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ width: 80, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => handleSort('status')}
+                >
+                  <Text style={styles.headerCell}>Status</Text>
+                  <Ionicons
+                    name={sortCol === 'status' ? (sortDir === 'asc' ? 'arrow-up' : 'arrow-down') : 'swap-vertical'}
+                    size={12}
+                    color={sortCol === 'status' ? "#000" : "#ccc"}
+                    style={{ marginLeft: 4 }}
+                  />
+                </TouchableOpacity>
+                <Text style={[styles.headerCell, { width: 160, textAlign: 'center' }]}>Aktion</Text>
+              </View>
+            )}
           </View>
         }
         ListEmptyComponent={
@@ -1419,8 +1873,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 16,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E5EA',
   },
   title: {
     fontSize: 24,
@@ -1589,7 +2041,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardSelected: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#F8FAFC',
   },
   checkboxContainer: {
     width: 40,
@@ -1607,7 +2059,7 @@ const styles = StyleSheet.create({
   },
   facilityText: {
     fontSize: 11,
-    color: '#007AFF',
+    color: '#111827',
     marginTop: 2,
   },
   cellText: {
@@ -1696,7 +2148,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   badgeRed: {
-    backgroundColor: '#FFEBEE',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 4,
     paddingVertical: 2,
     borderRadius: 4,
@@ -1704,7 +2156,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   badgeTextRed: {
-    color: '#C62828',
+    color: '#111827',
     fontSize: 10,
     fontWeight: 'bold'
   },
@@ -1724,9 +2176,9 @@ const styles = StyleSheet.create({
   statusButtonText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#2E7D32',
+    color: '#111827',
   },
   statusButtonTextRed: {
-    color: '#D32F2F',
+    color: '#111827',
   },
 });

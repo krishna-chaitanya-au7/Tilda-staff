@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   link: {
-    color: '#2563EB',
+    color: '#111827',
     fontSize: 14,
     textDecorationLine: 'underline',
   },

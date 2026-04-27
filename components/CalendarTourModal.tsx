@@ -5,7 +5,7 @@ import {
   StyleSheet,
   Modal,
   Pressable,
-  Dimensions,
+  useWindowDimensions,
   Platform,
   TouchableOpacity,
   type LayoutChangeEvent,
@@ -15,6 +15,7 @@ import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import type { CalendarTourStep } from '@/lib/calendarTourMobile';
 import { STAGE_PADDING } from '@/lib/calendarTourMobile';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 export type HoleRect = { x: number; y: number; w: number; h: number };
 
@@ -48,7 +49,8 @@ export default function CalendarTourModal({
 }: Props) {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
-  const { width: screenW, height: screenH } = Dimensions.get('window');
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  const isMobile = useIsMobile();
 
   const step = steps[stepIndex];
   const total = steps.length;
@@ -93,7 +95,9 @@ export default function CalendarTourModal({
 
   const bottomReserve = (tabBarHeight > 0 ? tabBarHeight : insets.bottom) + 8;
 
-  const cardW = Math.min(screenW - H_PAD * 2, CARD_MAX_W);
+  // Mobile uses a narrower card so it can shift horizontally toward the highlighted target.
+  const maxCardW = isMobile ? Math.min(300, screenW - H_PAD * 2) : CARD_MAX_W;
+  const cardW = Math.min(screenW - H_PAD * 2, maxCardW);
   const cardH = cardSize.h > 0 ? cardSize.h : ESTIMATED_CARD_H;
 
   const anchoredLayout = useMemo(() => {
@@ -146,6 +150,8 @@ export default function CalendarTourModal({
 
   if (!visible || !step) return null;
 
+  // Anchored tour card (with arrow pointing at the target) — matches web behavior.
+  // Falls back to a centered card only when the measurement is unavailable.
   const useAnchor = Boolean(dim && anchoredLayout);
 
   return (
@@ -274,7 +280,7 @@ export default function CalendarTourModal({
 const styles = StyleSheet.create({
   modalRoot: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
   },
   dim: {
     position: 'absolute',
@@ -327,6 +333,22 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 8 },
     }),
+  },
+  cardInnerMobile: {
+    borderRadius: 0,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingTop: 8,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#d1d5db',
+    marginTop: 8,
+    marginBottom: 8,
   },
   cardHeader: {
     flexDirection: 'row',

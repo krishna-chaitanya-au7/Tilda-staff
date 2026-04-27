@@ -208,7 +208,7 @@ export default function LogbookTab({ userId, academicYearId }: LogbookTabProps) 
                         <Ionicons 
                             name={item.action === 'UPDATE' ? 'pencil-outline' : 'document-text-outline'} 
                             size={16} 
-                            color="#3B82F6" 
+                            color="#111827" 
                         />
                     </View>
                     <View style={[styles.badge, item.action === 'UPDATE' ? styles.badgeBlue : styles.badgeGreen]}>
@@ -232,7 +232,7 @@ export default function LogbookTab({ userId, academicYearId }: LogbookTabProps) 
                     {hasChanges && (
                       <TouchableOpacity onPress={() => toggleExpanded(item.id)} style={styles.expandButton}>
                           <Text style={styles.expandButtonText}>Details</Text>
-                          <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={14} color="#2563EB" />
+                          <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={14} color="#111827" />
                       </TouchableOpacity>
                     )}
                 </View>
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#fff',
     borderWidth: 2,
-    borderColor: '#3B82F6',
+    borderColor: '#111827',
     zIndex: 2,
     marginBottom: -2,
   },
@@ -395,11 +395,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   badgeBlue: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#F1F5F9',
     borderColor: '#BFDBFE',
   },
   badgeGreen: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#F1F5F9',
     borderColor: '#BBF7D0',
   },
   badgeText: {
@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   badgeTextBlue: {
-    color: '#1D4ED8',
+    color: '#111827',
   },
   badgeTextGreen: {
     color: '#15803D',
@@ -466,7 +466,7 @@ const styles = StyleSheet.create({
   blueBar: {
     width: 3,
     height: 14,
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#111827',
     borderRadius: 1,
   },
   changeKey: {
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
   newValueContainer: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -515,7 +515,7 @@ const styles = StyleSheet.create({
   },
   expandButtonText: {
     fontSize: 12,
-    color: '#2563EB',
+    color: '#111827',
     fontWeight: '500',
   },
   summaryText: {

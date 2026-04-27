@@ -18,11 +18,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useRouter } from 'expo-router';
-import { format, parseISO } from 'date-fns';
+import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { SCREEN_HEADER_TOP_PAD } from '@/constants/theme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import type { SingleFacilityScope, SupervisorFacilityScope } from '@/lib/staffFacilityScope';
 
 type Scope = SingleFacilityScope | SupervisorFacilityScope;
@@ -97,7 +98,9 @@ export default function StaffTicketsScreen({
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const isMobile = useIsMobile();
   const msgListRef = useRef<FlatList>(null);
+  const [infoExpanded, setInfoExpanded] = useState(false);
 
   const [rawTickets, setRawTickets] = useState<TicketRow[]>([]);
   const [selected, setSelected] = useState<TicketRow | null>(null);
@@ -351,6 +354,26 @@ export default function StaffTicketsScreen({
     }
   };
 
+  /** Short time for mobile bubbles: today→HH:mm, yesterday→Gestern HH:mm, older→dd.MM HH:mm. */
+  const formatMsgTimeShort = (iso: string) => {
+    try {
+      const d = parseISO(iso);
+      if (isToday(d)) return format(d, 'HH:mm');
+      if (isYesterday(d)) return `Gestern ${format(d, 'HH:mm')}`;
+      return format(d, 'dd.MM. HH:mm');
+    } catch {
+      return iso;
+    }
+  };
+
+  const statusStyle = (s: string) => {
+    const v = String(s).toLowerCase();
+    if (v === 'open') return { bg: '#111827', fg: '#FFFFFF', label: 'Open' };
+    if (v === 'in_progress') return { bg: '#E5E7EB', fg: '#111827', label: 'In Progress' };
+    if (v === 'closed') return { bg: '#F3F4F6', fg: '#6B7280', label: 'Closed' };
+    return { bg: '#E5E7EB', fg: '#374151', label: s };
+  };
+
   const msgAuthor = (m: Tm) => {
     if (m.users) {
       const n = [m.users.first_name, m.users.family_name].filter(Boolean).join(' ').trim();
@@ -375,7 +398,7 @@ export default function StaffTicketsScreen({
           <Ionicons
             name="filter"
             size={22}
-            color={filterStatus !== 'all' || filterCategory !== 'all' ? '#0a7ea4' : '#374151'}
+            color={filterStatus !== 'all' || filterCategory !== 'all' ? '#111827' : '#374151'}
           />
         </TouchableOpacity>
       </View>
@@ -476,6 +499,203 @@ export default function StaffTicketsScreen({
     </View>
   );
 
+  const mobileDetailPane = selected ? (
+    <KeyboardAvoidingView
+      style={chat.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + keyboardOpenNudgePx : keyboardOpenNudgePx}
+    >
+      {/* Sticky header: back + title + status pill */}
+      <View style={chat.header}>
+        <TouchableOpacity onPress={() => setSelected(null)} hitSlop={12} style={chat.backBtn}>
+          <Ionicons name="chevron-back" size={26} color="#0F172A" />
+        </TouchableOpacity>
+        <View style={chat.headerCenter}>
+          <Text style={chat.headerTitle} numberOfLines={1}>
+            {selected.title || 'Ticket'}
+          </Text>
+          <Text style={chat.headerSubtitle} numberOfLines={1}>
+            {childLabel(selected)}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => setStatusPickerOpen(true)} hitSlop={8}>
+          <View style={[chat.statusPill, { backgroundColor: statusStyle(selected.status).bg }]}>
+            <Text style={[chat.statusPillText, { color: statusStyle(selected.status).fg }]}>
+              {statusStyle(selected.status).label}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={statusStyle(selected.status).fg} />
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      {/* Collapsible info bar */}
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => setInfoExpanded((v) => !v)}
+        style={chat.infoBar}
+      >
+        <Ionicons name="information-circle-outline" size={16} color="#64748B" />
+        <Text style={chat.infoBarText} numberOfLines={1}>
+          {infoExpanded ? 'Details ausblenden' : 'Details anzeigen'}
+        </Text>
+        <Ionicons name={infoExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#64748B" />
+      </TouchableOpacity>
+
+      {infoExpanded ? (
+        <View style={chat.infoExpanded}>
+          <View style={chat.infoRow}>
+            <Text style={chat.infoLabel}>Kind</Text>
+            <Text style={chat.infoValue} numberOfLines={1}>{childLabel(selected)}</Text>
+            {(selected.created_by as UserStub)?.id ? (
+              <TouchableOpacity onPress={() => openUserDetails((selected.created_by as UserStub).id)} hitSlop={8}>
+                <Ionicons name="open-outline" size={16} color="#111827" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <View style={chat.infoRow}>
+            <Text style={chat.infoLabel}>Erstellt von</Text>
+            <Text style={chat.infoValue} numberOfLines={1}>{creatorLabel(selected)}</Text>
+            {(selected.created_by_user?.id || (selected.created_by as UserStub)?.id) ? (
+              <TouchableOpacity
+                onPress={() =>
+                  openUserDetails(selected.created_by_user?.id || (selected.created_by as UserStub)?.id)
+                }
+                hitSlop={8}
+              >
+                <Ionicons name="open-outline" size={16} color="#111827" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <View style={chat.infoRow}>
+            <Text style={chat.infoLabel}>Erstellt</Text>
+            <Text style={chat.infoValue}>{formatDisplayDate(selected.created_at)}</Text>
+          </View>
+          <View style={chat.infoRow}>
+            <Text style={chat.infoLabel}>Stand</Text>
+            <Text style={chat.infoValue}>{formatDisplayDate(selected.updated_at)}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Messages */}
+      {loadingMsg ? (
+        <ActivityIndicator style={{ marginTop: 24 }} />
+      ) : (
+        <FlatList
+          ref={msgListRef}
+          data={messages}
+          keyExtractor={(m) => m.id}
+          style={chat.msgList}
+          contentContainerStyle={chat.msgListContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          ListEmptyComponent={
+            <View style={chat.emptyWrap}>
+              <Ionicons name="chatbubbles-outline" size={42} color="#CBD5E1" />
+              <Text style={chat.emptyText}>Noch keine Nachrichten</Text>
+              <Text style={chat.emptySub}>Schreibe die erste Nachricht unten</Text>
+            </View>
+          }
+          renderItem={({ item, index }) => {
+            const externalUser = isPortalUserMessage(item.users);
+            const alignLeft = externalUser;
+            const prev = index > 0 ? messages[index - 1] : null;
+            const next = index < messages.length - 1 ? messages[index + 1] : null;
+            const prevSameSide = prev ? isPortalUserMessage(prev.users) === externalUser : false;
+            const nextSameSide = next ? isPortalUserMessage(next.users) === externalUser : false;
+            const showAuthor = alignLeft && !prevSameSide;
+            const isFirst = !prevSameSide;
+            const isLast = !nextSameSide;
+
+            const bubbleStyles: any[] = [chat.bubble];
+            if (alignLeft) bubbleStyles.push(chat.bubbleLeft);
+            else bubbleStyles.push(chat.bubbleRight);
+            if (isFirst && isLast) bubbleStyles.push(alignLeft ? chat.bubbleLeftSolo : chat.bubbleRightSolo);
+            else if (isFirst) bubbleStyles.push(alignLeft ? chat.bubbleLeftFirst : chat.bubbleRightFirst);
+            else if (isLast) bubbleStyles.push(alignLeft ? chat.bubbleLeftLast : chat.bubbleRightLast);
+            else bubbleStyles.push(alignLeft ? chat.bubbleLeftMid : chat.bubbleRightMid);
+
+            return (
+              <View style={[chat.row, !isLast && chat.rowTight]}>
+                <View style={bubbleStyles}>
+                  {showAuthor ? (
+                    <Text style={chat.bubbleAuthor}>{msgAuthor(item)}</Text>
+                  ) : null}
+                  <Text style={[chat.bubbleText, !alignLeft && chat.bubbleTextRight]}>
+                    {item.message}
+                  </Text>
+                  {isLast ? (
+                    <Text
+                      style={[
+                        chat.bubbleTime,
+                        alignLeft ? chat.bubbleTimeLeft : chat.bubbleTimeRight,
+                      ]}
+                    >
+                      {formatMsgTimeShort(item.created_at)}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            );
+          }}
+        />
+      )}
+
+      {/* Composer */}
+      <View style={chat.composer}>
+        <View style={chat.inputWrap}>
+          <TextInput
+            style={chat.input}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={selected.status === 'closed' ? 'Ticket geschlossen' : 'Nachricht schreiben…'}
+            placeholderTextColor="#94A3B8"
+            multiline
+            editable={selected.status !== 'closed'}
+            onFocus={() => {
+              setTimeout(() => msgListRef.current?.scrollToEnd({ animated: true }), 250);
+            }}
+          />
+        </View>
+        <TouchableOpacity
+          style={[
+            chat.sendBtn,
+            (!draft.trim() || selected.status === 'closed' || sending) && chat.sendBtnDisabled,
+          ]}
+          onPress={sendMessage}
+          disabled={sending || !draft.trim() || selected.status === 'closed'}
+          hitSlop={6}
+        >
+          {sending ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Ionicons name="send" size={18} color="#fff" />
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <Modal visible={statusPickerOpen} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setStatusPickerOpen(false)}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Status ändern</Text>
+            {STATUS_OPTIONS.map((o) => (
+              <TouchableOpacity
+                key={o.value}
+                style={styles.statusOption}
+                onPress={() => updateTicketStatus(o.value)}
+              >
+                <Text style={styles.statusOptionText}>{o.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.modalDone} onPress={() => setStatusPickerOpen(false)}>
+              <Text style={styles.modalDoneText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </KeyboardAvoidingView>
+  ) : null;
+
   const detailPane = (
     <KeyboardAvoidingView
       style={[styles.detailPane, isWide && styles.detailPaneWide]}
@@ -486,6 +706,16 @@ export default function StaffTicketsScreen({
         <Text style={styles.placeholder}>Ticket auswählen</Text>
       ) : (
         <>
+          {!isWide && (
+            <TouchableOpacity
+              style={styles.backBtnTop}
+              onPress={() => setSelected(null)}
+              hitSlop={8}
+            >
+              <Ionicons name="chevron-back" size={22} color="#111827" />
+              <Text style={styles.backBtnText}>Liste</Text>
+            </TouchableOpacity>
+          )}
           <ScrollView style={styles.detailHeader} keyboardShouldPersistTaps="handled">
             <Text style={styles.detailTitle}>{selected.title}</Text>
             <View style={styles.metaRow}>
@@ -493,7 +723,7 @@ export default function StaffTicketsScreen({
               <Text style={styles.metaValue}>{childLabel(selected)}</Text>
               {(selected.created_by as UserStub)?.id ? (
                 <TouchableOpacity onPress={() => openUserDetails((selected.created_by as UserStub).id)} hitSlop={8}>
-                  <Ionicons name="information-circle-outline" size={22} color="#0a7ea4" />
+                  <Ionicons name="information-circle-outline" size={22} color="#111827" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -507,7 +737,7 @@ export default function StaffTicketsScreen({
                   }
                   hitSlop={8}
                 >
-                  <Ionicons name="information-circle-outline" size={22} color="#0a7ea4" />
+                  <Ionicons name="information-circle-outline" size={22} color="#111827" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -596,7 +826,19 @@ export default function StaffTicketsScreen({
     </KeyboardAvoidingView>
   );
 
-  const rootBottomPad = (tabBarHeight > 0 ? tabBarHeight : insets.bottom) + 8;
+  const rootBottomPad = tabBarHeight > 0 ? tabBarHeight : insets.bottom;
+
+  // Mobile detail view takes over the whole screen (no top pad from parent, handled inside)
+  if (isMobile && selected) {
+    // iOS tab bar is absolute → need padding to clear it.
+    // Android tab bar takes layout space → padding would create a gray gap above tab bar.
+    const mobileBottomPad = Platform.OS === 'ios' ? (tabBarHeight > 0 ? tabBarHeight : insets.bottom) : 0;
+    return (
+      <View style={[chat.page, { paddingTop: insets.top, paddingBottom: mobileBottomPad }]}>
+        {mobileDetailPane}
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD, paddingBottom: rootBottomPad }]}>
@@ -609,18 +851,13 @@ export default function StaffTicketsScreen({
       ) : (
         <View style={{ flex: 1 }}>{selected ? detailPane : listPane}</View>
       )}
-      {!isWide && selected ? (
-        <TouchableOpacity style={styles.backBtn} onPress={() => setSelected(null)}>
-          <Text style={styles.backBtnText}>← Liste</Text>
-        </TouchableOpacity>
-      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#f9fafb' },
-  err: { color: '#b91c1c', paddingHorizontal: 16, marginBottom: 8 },
+  err: { color: '#111827', paddingHorizontal: 16, marginBottom: 8 },
   split: { flex: 1, flexDirection: 'row' },
   listPane: { flex: 1, paddingHorizontal: 12, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: '#e5e7eb' },
   listPaneWide: { flex: 0.38, maxWidth: 400 },
@@ -657,7 +894,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  ticketRowActive: { borderColor: '#2563eb', borderWidth: 2, backgroundColor: '#eff6ff' },
+  ticketRowActive: { borderColor: '#111827', borderWidth: 2, backgroundColor: '#F1F5F9' },
   ticketRowTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   ticketChildName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#111827' },
   ticketDate: { fontSize: 12, color: '#9ca3af' },
@@ -710,15 +947,15 @@ const styles = StyleSheet.create({
   },
   bubbleRight: {
     alignSelf: 'flex-end',
-    backgroundColor: '#e0f2fe',
-    borderColor: '#bae6fd',
+    backgroundColor: '#F1F5F9',
+    borderColor: '#D1D5DB',
   },
   bubbleAuthor: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  bubbleAuthorLeft: { color: '#0a7ea4' },
-  bubbleAuthorRight: { color: '#0369a1', textAlign: 'right' },
+  bubbleAuthorLeft: { color: '#111827' },
+  bubbleAuthorRight: { color: '#111827', textAlign: 'right' },
   bubbleText: { fontSize: 15, color: '#111827' },
   bubbleTime: { fontSize: 11, color: '#9ca3af', marginTop: 4 },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingVertical: 8 },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingTop: 8, paddingBottom: 2 },
   input: {
     flex: 1,
     minHeight: 44,
@@ -731,11 +968,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     fontSize: 15,
   },
-  sendBtn: { backgroundColor: '#0a7ea4', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10 },
+  sendBtn: { backgroundColor: '#111827', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10 },
   sendBtnDisabled: { opacity: 0.5 },
   sendBtnText: { color: '#fff', fontWeight: '600' },
-  backBtn: { padding: 16 },
-  backBtnText: { color: '#0a7ea4', fontWeight: '600' },
+  backBtnTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+  },
+  backBtnText: { color: '#111827', fontWeight: '600', fontSize: 15 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -760,11 +1004,205 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: '#fff',
   },
-  chipActive: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
+  chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
   chipText: { fontSize: 13, color: '#374151' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   modalDone: { marginTop: 8, paddingVertical: 12, alignItems: 'center' },
-  modalDoneText: { color: '#0a7ea4', fontWeight: '600', fontSize: 16 },
+  modalDoneText: { color: '#111827', fontWeight: '600', fontSize: 16 },
   statusOption: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e5e7eb' },
   statusOptionText: { fontSize: 16, color: '#111827' },
+});
+
+/** Mobile-only chat detail styles (WhatsApp-style). */
+const chat = StyleSheet.create({
+  page: { flex: 1, backgroundColor: '#EAEEF2' },
+  root: { flex: 1 },
+
+  // Sticky header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+  },
+  headerCenter: { flex: 1, minWidth: 0 },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  headerSubtitle: { fontSize: 12, color: '#64748B', marginTop: 1 },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  statusPillText: { fontSize: 11, fontWeight: '700' },
+
+  // Info bar
+  infoBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
+  infoBarText: { flex: 1, fontSize: 12, color: '#64748B', fontWeight: '500' },
+  infoExpanded: {
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoLabel: { fontSize: 12, color: '#64748B', width: 92 },
+  infoValue: { flex: 1, fontSize: 13, color: '#0F172A', fontWeight: '500' },
+
+  // Message list
+  msgList: { flex: 1 },
+  msgListContent: { paddingHorizontal: 10, paddingVertical: 10 },
+  emptyWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 8 },
+  emptyText: { fontSize: 15, fontWeight: '600', color: '#475569' },
+  emptySub: { fontSize: 13, color: '#94A3B8' },
+
+  // Rows
+  row: { marginBottom: 4 },
+  rowTight: { marginBottom: 2 },
+
+  // Bubbles
+  bubble: {
+    maxWidth: '82%',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  bubbleLeft: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+  },
+  bubbleRight: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#F1F5F9',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#D1D5DB',
+  },
+  // Tail rounding — chat bubbles with visual grouping
+  bubbleLeftSolo: {
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleLeftFirst: {
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleLeftMid: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleLeftLast: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleRightSolo: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 4,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleRightFirst: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 4,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleRightMid: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  bubbleRightLast: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+
+  bubbleAuthor: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  bubbleText: {
+    fontSize: 15,
+    color: '#0F172A',
+    lineHeight: 20,
+  },
+  bubbleTextRight: { color: '#0F172A' },
+  bubbleTime: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  bubbleTimeLeft: { textAlign: 'left' },
+  bubbleTimeRight: { textAlign: 'right', color: '#64748B' },
+
+  // Composer
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E2E8F0',
+  },
+  inputWrap: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 4,
+    minHeight: 40,
+    maxHeight: 120,
+    justifyContent: 'center',
+  },
+  input: {
+    fontSize: 15,
+    color: '#0F172A',
+    padding: 0,
+  },
+  sendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: { backgroundColor: '#94A3B8' },
 });

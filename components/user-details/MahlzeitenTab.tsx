@@ -359,7 +359,7 @@ export default function MahlzeitenTab({ userId, facilityId, from }: MahlzeitenTa
                   */}
 
                   {modalLoading ? (
-                     <ActivityIndicator size="large" color="#007AFF" />
+                     <ActivityIndicator size="large" color="#111827" />
                   ) : availableMenulines.length > 0 ? (
                      <View style={styles.menuList}>
                         {availableMenulines.map(menu => {
@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   allergyText: {
-    color: '#D32F2F',
+    color: '#111827',
   },
   skippedText: {
     color: '#999',
@@ -484,7 +484,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   badgeSkipped: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
@@ -499,12 +499,12 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#007AFF',
+    borderColor: '#111827',
     borderRadius: 4,
   },
   detailsBtnText: {
     fontSize: 11,
-    color: '#007AFF',
+    color: '#111827',
     fontWeight: '500',
   },
   // Modal Styles
@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
      fontWeight: '600',
      fontSize: 13,
   },
-  textDanger: { color: '#DC2626' },
+  textDanger: { color: '#111827' },
   textSuccess: { color: '#374151' },
   
   menuList: {
@@ -576,8 +576,8 @@ const styles = StyleSheet.create({
      position: 'relative',
   },
   menuCardSelected: {
-     borderColor: '#007AFF',
-     backgroundColor: '#F0F9FF',
+     borderColor: '#111827',
+     backgroundColor: '#F8FAFC',
   },
   selectBtn: {
      position: 'absolute',
@@ -592,8 +592,8 @@ const styles = StyleSheet.create({
      backgroundColor: '#fff',
   },
   selectBtnSelected: {
-     backgroundColor: '#007AFF',
-     borderColor: '#007AFF',
+     backgroundColor: '#111827',
+     borderColor: '#111827',
   },
   selectBtnText: {
      fontSize: 12,

@@ -1,14 +1,18 @@
 import { Tabs } from 'expo-router';
 import { Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 export default function SupervisorTabLayout() {
   const colorScheme = useColorScheme();
+  const isMobile = useIsMobile();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
@@ -18,12 +22,20 @@ export default function SupervisorTabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarBackground: TabBarBackground,
-        tabBarStyle: Platform.select({
-          ios: {
-            position: 'absolute',
+        tabBarShowLabel: !isMobile,
+        tabBarLabelStyle: { fontSize: 12 },
+        tabBarIconStyle: isMobile ? { marginTop: 0 } : undefined,
+        tabBarStyle: [
+          Platform.select({
+            ios: { position: 'absolute' as const },
+            default: {},
+          }),
+          isMobile && {
+            height: 58 + insets.bottom,
+            paddingBottom: 6 + insets.bottom,
+            paddingTop: 8,
           },
-          default: {},
-        }),
+        ],
       }}
     >
       <Tabs.Screen name="index" options={{ href: null }} />

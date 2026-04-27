@@ -77,7 +77,7 @@ export default function EmailLogsTab({ userIds }: EmailLogsTabProps) {
         <View style={styles.iconCol}>
            <View style={styles.iconCircle}>
               {isFailed ? (
-                 <Ionicons name="alert-circle-outline" size={18} color="#DC2626" />
+                 <Ionicons name="alert-circle-outline" size={18} color="#111827" />
               ) : (
                  <Ionicons name="mail-outline" size={18} color="#6B7280" />
               )}
@@ -219,8 +219,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
   },
   badgeRed: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
-  badgeGreen: { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
-  badgeBlue: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
+  badgeGreen: { backgroundColor: '#F1F5F9', borderColor: '#BBF7D0' },
+  badgeBlue: { backgroundColor: '#F1F5F9', borderColor: '#BFDBFE' },
   textRed: { fontSize: 10, fontWeight: '600', color: '#991B1B' },
   textGreen: { fontSize: 10, fontWeight: '600', color: '#166534' },
   textBlue: { fontSize: 10, fontWeight: '600', color: '#1E40AF' },
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    color: '#DC2626',
+    color: '#111827',
   },
 });
 

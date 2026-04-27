@@ -42,6 +42,8 @@ import {
   getMonday,
   getMonthNameDe,
   parseISODateLocal,
+  facilityCourseLegacyEvents,
+  facilityCourseSessionEvents,
   withAcademicYear,
 } from '@/lib/studentPlanCalendar';
 
@@ -56,8 +58,8 @@ const EMPTY_BASE_SLOTS: Array<{
 
 /** Same as StaffCalendarScreen week grid */
 const ROW_H = 26;
-const TIME_COL_W = 64;
-const DAY_MIN_W = 72;
+const TIME_COL_W_DEFAULT = 64;
+const DAY_MIN_W_DEFAULT = 72;
 
 type BaseSubject = {
   id: string;
@@ -122,6 +124,14 @@ export default function AttendanceEmbeddedWeekCalendar({
     setSelectedDay(anchorDate);
   }, [anchorDate]);
 
+  // Responsive grid sizing — shrink columns so the whole week fits the viewport on phones.
+  const available = Math.max(0, width - 32);
+  const defaultMinWidth = TIME_COL_W_DEFAULT + 5 * DAY_MIN_W_DEFAULT; // 424
+  const fitsDefault = available >= defaultMinWidth;
+  const TIME_COL_W = fitsDefault ? TIME_COL_W_DEFAULT : Math.max(40, Math.floor(available * 0.14));
+  const DAY_MIN_W = fitsDefault
+    ? DAY_MIN_W_DEFAULT
+    : Math.max(36, Math.floor((available - TIME_COL_W) / 5));
   const gridMinWidth = TIME_COL_W + 5 * DAY_MIN_W;
   const cellSize = Math.min(72, Math.floor((width - 32) / 7));
 
@@ -416,6 +426,7 @@ export default function AttendanceEmbeddedWeekCalendar({
             }
           : getFacilityEventsVisibleRange(weekOf, 'week');
       const rangeOr = `and(start_date.lte.${end},end_date.gte.${start})`;
+      const yearNum = Number(academicYearId);
 
       const { data: eventRows, error: evErr } = await supabase
         .from('facility_events')
@@ -423,19 +434,32 @@ export default function AttendanceEmbeddedWeekCalendar({
           'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal, event_type'
         )
         .eq('facility_id', facilityId)
-        .eq('academic_year', Number(academicYearId))
+        .eq('academic_year', yearNum)
         .or(rangeOr);
       if (evErr) throw evErr;
 
-      const { data: courseRows, error: courseErr } = await supabase
-        .from('facility_courses')
-        .select(
-          'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal'
-        )
+      const courseSelect =
+        'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal';
+
+      const { data: sessionRowsRaw, error: sessionRangeErr } = await supabase
+        .from('facility_course_schedule_days')
+        .select('id, course_id, session_date, start_time, end_time')
         .eq('facility_id', facilityId)
-        .eq('academic_year', Number(academicYearId))
-        .or(rangeOr);
-      if (courseErr) throw courseErr;
+        .eq('academic_year', yearNum)
+        .gte('session_date', start)
+        .lte('session_date', end);
+
+      const { data: anySchedRows, error: anySchedErr } = await supabase
+        .from('facility_course_schedule_days')
+        .select('course_id')
+        .eq('facility_id', facilityId)
+        .eq('academic_year', yearNum);
+
+      const scheduleTableOk = !sessionRangeErr && !anySchedErr;
+      const courseIdsWithAnySchedule = new Set<string>();
+      (anySchedRows || []).forEach((r: any) => {
+        if (r?.course_id) courseIdsWithAnySchedule.add(String(r.course_id));
+      });
 
       const events: FacilityEventItem[] = (eventRows || []).map((row: any) => ({
         id: String(row.id),
@@ -454,24 +478,71 @@ export default function AttendanceEmbeddedWeekCalendar({
         cancel_meal: row.cancel_meal,
         event_type: row.event_type === 'course' ? 'course' : 'event',
       }));
-      const courses: FacilityEventItem[] = (courseRows || []).map((row: any) => ({
-        id: String(row.id),
-        sourceTable: 'facility_courses' as const,
-        title: String(row.title || ''),
-        description: row.description ?? null,
-        start_date: String(row.start_date),
-        end_date: String(row.end_date),
-        start_time: row.start_time ?? null,
-        end_time: row.end_time ?? null,
-        all_day: !!row.all_day,
-        location: row.location ?? null,
-        color: row.color ?? null,
-        category: row.category ?? null,
-        target_classes: row.target_classes,
-        cancel_meal: row.cancel_meal,
-        event_type: 'course' as const,
-      }));
-      setFacilityEvents([...events, ...courses]);
+
+      if (!scheduleTableOk) {
+        const { data: courseRows, error: courseErr } = await supabase
+          .from('facility_courses')
+          .select(courseSelect)
+          .eq('facility_id', facilityId)
+          .eq('academic_year', yearNum)
+          .or(rangeOr);
+        if (courseErr) throw courseErr;
+        const legacyCourses = (courseRows || []).map((row: any) => ({
+          id: String(row.id),
+          sourceTable: 'facility_courses' as const,
+          title: String(row.title || ''),
+          description: row.description ?? null,
+          start_date: String(row.start_date),
+          end_date: String(row.end_date),
+          start_time: row.start_time ?? null,
+          end_time: row.end_time ?? null,
+          all_day: !!row.all_day,
+          location: row.location ?? null,
+          color: row.color ?? null,
+          category: row.category ?? null,
+          target_classes: row.target_classes,
+          cancel_meal: row.cancel_meal,
+          event_type: 'course' as const,
+        }));
+        setFacilityEvents([...events, ...legacyCourses]);
+        return;
+      }
+
+      const courseSessionInRange = (sessionRowsRaw || []) as Array<{
+        id: string;
+        course_id: string;
+        session_date: string;
+        start_time: string | null;
+        end_time: string | null;
+      }>;
+      const sessionCourseIdList = [
+        ...new Set(courseSessionInRange.map((s) => String(s.course_id || '')).filter(Boolean)),
+      ];
+
+      const courseById = new Map<string, any>();
+      if (sessionCourseIdList.length) {
+        const { data: courseMetaRows, error: metaErr } = await supabase
+          .from('facility_courses')
+          .select(courseSelect)
+          .in('id', sessionCourseIdList);
+        if (metaErr) throw metaErr;
+        (courseMetaRows || []).forEach((row: any) => {
+          if (row?.id != null) courseById.set(String(row.id), row);
+        });
+      }
+
+      const fromSessions = facilityCourseSessionEvents(courseSessionInRange, courseById);
+
+      const { data: courseRows, error: courseErr } = await supabase
+        .from('facility_courses')
+        .select(courseSelect)
+        .eq('facility_id', facilityId)
+        .eq('academic_year', yearNum)
+        .or(rangeOr);
+      if (courseErr) throw courseErr;
+
+      const fromLegacy = facilityCourseLegacyEvents(courseRows, courseIdsWithAnySchedule);
+      setFacilityEvents([...events, ...fromSessions, ...fromLegacy]);
     } catch {
       setFacilityEvents([]);
     }
@@ -654,7 +725,7 @@ export default function AttendanceEmbeddedWeekCalendar({
             onPress={() => onWeekNavigate(addDays(currentMonday, -7))}
             accessibilityLabel="Vorherige Woche"
           >
-            <Ionicons name="chevron-back" size={22} color="#0a7ea4" />
+            <Ionicons name="chevron-back" size={22} color="#111827" />
           </TouchableOpacity>
           <Text style={styles.periodLabel} numberOfLines={2}>
             {periodLabel}
@@ -664,7 +735,7 @@ export default function AttendanceEmbeddedWeekCalendar({
             onPress={() => onWeekNavigate(addDays(currentMonday, 7))}
             accessibilityLabel="Nächste Woche"
           >
-            <Ionicons name="chevron-forward" size={22} color="#0a7ea4" />
+            <Ionicons name="chevron-forward" size={22} color="#111827" />
           </TouchableOpacity>
         </View>
       ) : null}
@@ -955,7 +1026,7 @@ const styles = StyleSheet.create({
   navIconBtn: { padding: 4 },
   periodLabel: { flex: 1, fontSize: 13, fontWeight: '600', color: '#111827', textAlign: 'center' },
   classHint: { fontSize: 12, color: '#64748b', marginBottom: 6 },
-  warn: { fontSize: 12, color: '#b45309', marginBottom: 8 },
+  warn: { fontSize: 12, color: '#374151', marginBottom: 8 },
   loader: { marginVertical: 8 },
   scrollContent: { paddingBottom: 4 },
   gridHeaderRow: { flexDirection: 'row', borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f3f4f6' },
@@ -972,12 +1043,12 @@ const styles = StyleSheet.create({
   hdrDayText: { fontSize: 10, fontWeight: '600', color: '#111827', textAlign: 'center' },
   closingBadge: {
     marginTop: 2,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#b91c1c' },
+  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#111827' },
   gridRow: { flexDirection: 'row', borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#e5e7eb' },
   timeCell: {
     paddingVertical: 3,
@@ -1050,7 +1121,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   segBtn: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff' },
-  segBtnOn: { backgroundColor: '#0a7ea4' },
+  segBtnOn: { backgroundColor: '#111827' },
   segText: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
   segTextOn: { color: '#fff' },
   monthWrap: { paddingBottom: 8 },
@@ -1061,8 +1132,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: 'wrap',
   },
-  monthNavBtn: { fontSize: 22, color: '#0a7ea4', fontWeight: '700', paddingHorizontal: 8 },
-  todayLink: { fontSize: 14, color: '#0a7ea4', fontWeight: '600' },
+  monthNavBtn: { fontSize: 22, color: '#111827', fontWeight: '700', paddingHorizontal: 8 },
+  todayLink: { fontSize: 14, color: '#111827', fontWeight: '600' },
   monthTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginLeft: 8, flex: 1, minWidth: 120 },
   weekHdrRow: { flexDirection: 'row', marginTop: 4 },
   weekHdr: { textAlign: 'center', fontSize: 12, color: '#6b7280', fontWeight: '600' },
@@ -1087,10 +1158,10 @@ const styles = StyleSheet.create({
     minHeight: 2,
   },
   cellMuted: { backgroundColor: '#f3f4f6' },
-  cellSel: { backgroundColor: '#e0f2fe', borderColor: '#0a7ea4' },
+  cellSel: { backgroundColor: '#F1F5F9', borderColor: '#111827' },
   cellNum: { fontSize: 16, fontWeight: '600', color: '#111827', alignSelf: 'flex-start' },
   cellNumMuted: { color: '#9ca3af' },
-  cellNumSel: { color: '#0a7ea4' },
+  cellNumSel: { color: '#111827' },
   cellMonthClosing: { backgroundColor: '#fef2f2' },
   monthStrip: {
     alignSelf: 'stretch',

@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
 import { resolveFacilityBranchPath, type UserAccessRow } from '@/lib/facilityPermissions';
 
@@ -136,57 +134,59 @@ export default function LoginScreen() {
     }
 
     return (
-      <ThemedView style={styles.errorBox}>
-        <ThemedText style={styles.errorText}>{message}</ThemedText>
-      </ThemedView>
+      <View style={styles.errorBox}>
+        <Text style={styles.errorText}>{message}</Text>
+      </View>
     );
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedView style={styles.card}>
-        <ThemedText type="title" style={styles.title}>
-          Login
-        </ThemedText>
-        <ThemedText style={styles.subtitle}>
+    <View style={styles.container}>
+      <View style={styles.card}>
+        <Text style={styles.title}>Login</Text>
+        <Text style={styles.subtitle}>
           Enter your email and password to login to your account.
-        </ThemedText>
+        </Text>
 
         {renderError()}
 
-        <ThemedView style={styles.field}>
-          <ThemedText style={styles.label}>Email</ThemedText>
+        <View style={styles.field}>
+          <Text style={styles.label}>Email</Text>
           <TextInput
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
             keyboardType="email-address"
             placeholder="m@example.com"
+            placeholderTextColor="#9CA3AF"
             style={styles.input}
           />
-        </ThemedView>
+        </View>
 
-        <ThemedView style={styles.field}>
-          <ThemedText style={styles.label}>Password</ThemedText>
+        <View style={styles.field}>
+          <Text style={styles.label}>Password</Text>
           <TextInput
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            placeholder="••••••••"
+            placeholderTextColor="#9CA3AF"
             style={styles.input}
           />
-        </ThemedView>
+        </View>
 
         <TouchableOpacity
           style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleLogin}
           disabled={loading}
+          activeOpacity={0.85}
         >
-          <ThemedText style={styles.buttonText}>
+          <Text style={styles.buttonText}>
             {loading ? 'Logging in…' : 'Login'}
-          </ThemedText>
+          </Text>
         </TouchableOpacity>
-      </ThemedView>
-    </ThemedView>
+      </View>
+    </View>
   );
 }
 
@@ -196,57 +196,77 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
+    backgroundColor: '#FFFFFF',
   },
   card: {
     width: '100%',
     maxWidth: 480,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,
-    gap: 16,
+    gap: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   title: {
-    marginBottom: 4,
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 2,
   },
   subtitle: {
     fontSize: 14,
+    color: '#64748B',
+    lineHeight: 20,
   },
   field: {
-    marginTop: 8,
+    marginTop: 4,
   },
   label: {
-    marginBottom: 4,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 6,
   },
   input: {
-    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#0F172A',
   },
   button: {
-    marginTop: 16,
-    borderRadius: 8,
-    paddingVertical: 12,
+    marginTop: 8,
+    backgroundColor: '#111827',
+    borderRadius: 10,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   buttonDisabled: {
-    opacity: 0.7,
+    opacity: 0.6,
   },
   buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
   errorBox: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
-    marginTop: 8,
   },
   errorText: {
-    fontSize: 14,
+    fontSize: 13,
+    color: '#B91C1C',
   },
 });
-
-
-

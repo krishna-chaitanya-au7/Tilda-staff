@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View, ActivityIndicator, Text, useWindowDimensions, Modal, Alert, RefreshControl, Linking } from 'react-native';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,7 +93,8 @@ export default function SupervisorProfileScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isLandscape = width > 768;
-  const insets = useSafeAreaInsets(); 
+  const isMobile = useIsMobile();
+  const insets = useSafeAreaInsets();
 
   const [id, setId] = useState<string | null>(null);
   const [user, setUser] = useState<UserDetails | null>(null);
@@ -355,12 +357,12 @@ export default function SupervisorProfileScreen() {
         <ScrollView 
           style={styles.blockedUsersContent}
           refreshControl={
-            <RefreshControl refreshing={isLoadingBlocked} onRefresh={loadBlockedUsers} tintColor="#007AFF" />
+            <RefreshControl refreshing={isLoadingBlocked} onRefresh={loadBlockedUsers} tintColor="#111827" />
           }
         >
           {isLoadingBlocked ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#007AFF" />
+              <ActivityIndicator size="large" color="#111827" />
               <Text style={styles.loadingText}>Loading…</Text>
             </View>
           ) : blockedUsers.length === 0 ? (
@@ -393,7 +395,7 @@ export default function SupervisorProfileScreen() {
   if (loading || !id) {
     return (
       <ThemedView style={styles.center}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color="#111827" />
       </ThemedView>
     );
   }
@@ -514,11 +516,11 @@ export default function SupervisorProfileScreen() {
   );
 
   return (
-    <View style={[styles.mainContainer, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }]}>
-      <ScrollView 
+    <View style={[styles.mainContainer, { paddingTop: insets.top + (isMobile ? 0 : SCREEN_HEADER_TOP_PAD) }]}>
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#111827" />
         }
       >
 
@@ -526,7 +528,7 @@ export default function SupervisorProfileScreen() {
          {/* Hero Section */}
          <View style={styles.heroSection}>
             <View style={styles.headerActions}>
-                <View /> 
+                <View />
                 <TouchableOpacity onPress={handleEdit} style={styles.iconButton}>
                    <Ionicons name="pencil" size={24} color="#fff" />
                 </TouchableOpacity>
@@ -633,14 +635,14 @@ const styles = StyleSheet.create({
   },
   // Hero
   heroSection: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3B82F6',
     paddingTop: 52,
     paddingBottom: 40,
     paddingHorizontal: 20,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
     marginBottom: 20,
-    shadowColor: '#007AFF',
+    shadowColor: '#3B82F6',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -676,7 +678,7 @@ const styles = StyleSheet.create({
   heroAvatarText: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#007AFF',
+    color: '#111827',
   },
   heroName: {
     fontSize: 24,
@@ -813,7 +815,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabChipActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#111827',
   },
   tabChipText: {
     fontSize: 13,
@@ -1017,7 +1019,7 @@ const styles = StyleSheet.create({
   unblockButton: {
     paddingVertical: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#b91c1c',
+    backgroundColor: '#111827',
     borderRadius: 8,
   },
   unblockButtonText: {
@@ -1088,7 +1090,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   menuItemSelected: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#F8FAFC',
   },
   menuItemText: {
     fontSize: 16,
@@ -1096,6 +1098,64 @@ const styles = StyleSheet.create({
   },
   menuItemTextSelected: {
     fontWeight: '600',
-    color: '#007AFF',
+    color: '#111827',
+  },
+});
+
+const mobileProfileStyles = StyleSheet.create({
+  hero: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 12,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroAvatarText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  heroName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  heroBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  heroBadgeText: {
+    color: '#111827',
+    fontWeight: '600',
+    fontSize: 12,
+    textTransform: 'capitalize',
+  },
+  editBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

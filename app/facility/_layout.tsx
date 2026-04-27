@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 
 import { HapticTab } from '@/components/haptic-tab';
@@ -8,6 +9,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import {
   getFacilityTypeName,
   resolveFacilityIdFromAccess,
@@ -18,6 +20,8 @@ import { supabase } from '@/lib/supabase';
 
 export default function FacilityTabLayout() {
   const colorScheme = useColorScheme();
+  const isMobile = useIsMobile();
+  const insets = useSafeAreaInsets();
   /** Tickets tab only for kindergarten (Kita) staff — school facility users stay on /facility without this tab. */
   const [showTicketsTab, setShowTicketsTab] = useState(false);
 
@@ -64,12 +68,20 @@ export default function FacilityTabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarBackground: TabBarBackground,
-        tabBarStyle: Platform.select({
-          ios: {
-            position: 'absolute',
+        tabBarShowLabel: !isMobile,
+        tabBarLabelStyle: { fontSize: 12 },
+        tabBarIconStyle: isMobile ? { marginTop: 0 } : undefined,
+        tabBarStyle: [
+          Platform.select({
+            ios: { position: 'absolute' as const },
+            default: {},
+          }),
+          isMobile && {
+            height: 58 + insets.bottom,
+            paddingBottom: 6 + insets.bottom,
+            paddingTop: 8,
           },
-          default: {},
-        }),
+        ],
       }}
     >
       <Tabs.Screen name="index" options={{ href: null }} />

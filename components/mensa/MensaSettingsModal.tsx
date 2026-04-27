@@ -424,7 +424,13 @@ export function MensaSettingsModal({
                   Diese Einrichtung benötigt Karten zur Identifizierung der Schüler (Ausgabeterminal).
                 </Text>
               </View>
-              <Switch value={false} disabled />
+              <Switch
+                value={false}
+                disabled
+                trackColor={{ false: '#d1d5db', true: '#111827' }}
+                thumbColor={Platform.OS === 'android' ? '#ffffff' : undefined}
+                ios_backgroundColor="#d1d5db"
+              />
             </View>
 
             {priceEntries.length > 0 && (
@@ -461,7 +467,13 @@ export function MensaSettingsModal({
                   Eltern erhalten eine vorausgewählte Essensbestellung, die sie bis zum Bestellschluss anpassen können.*
                 </Text>
               </View>
-              <Switch value={showUserAutoSelect} onValueChange={setShowUserAutoSelect} />
+              <Switch
+                value={showUserAutoSelect}
+                onValueChange={setShowUserAutoSelect}
+                trackColor={{ false: '#d1d5db', true: '#111827' }}
+                thumbColor={Platform.OS === 'android' ? '#ffffff' : undefined}
+                ios_backgroundColor="#d1d5db"
+              />
             </View>
 
             <View style={styles.block}>
@@ -515,7 +527,13 @@ export function MensaSettingsModal({
                   <Text style={styles.blockTitle}>Einzelne Mahlzeiten abbestellen</Text>
                   <Text style={styles.hint}>Eltern dürfen Mahlzeiten einzeln abbestellen.*</Text>
                 </View>
-                <Switch value={canSkipMeals} onValueChange={setCanSkipMeals} />
+                <Switch
+                  value={canSkipMeals}
+                  onValueChange={setCanSkipMeals}
+                  trackColor={{ false: '#d1d5db', true: '#111827' }}
+                  thumbColor={Platform.OS === 'android' ? '#ffffff' : undefined}
+                  ios_backgroundColor="#d1d5db"
+                />
               </View>
               <View style={styles.skipTimeRow}>
                 <View style={styles.timeFieldInnerWide}>
@@ -728,7 +746,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: { fontSize: 20, fontWeight: '700', color: '#111827', flex: 1 },
-  link: { color: '#0a7ea4', fontWeight: '600' },
+  link: { color: '#111827', fontWeight: '600' },
   sub: { fontSize: 14, color: '#6b7280', paddingHorizontal: 16, marginTop: 8, marginBottom: 8 },
   scroll: { padding: 16, paddingBottom: 48 },
   block: {
@@ -768,7 +786,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 8,
   },
-  radioSel: { borderColor: '#0a7ea4', backgroundColor: '#f0f9ff' },
+  radioSel: { borderColor: '#111827', backgroundColor: '#F8FAFC' },
   input: {
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -911,7 +929,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e5e7eb',
   },
-  timePickerOkText: { color: '#007AFF', fontWeight: '600', fontSize: 16 },
+  timePickerOkText: { color: '#111827', fontWeight: '600', fontSize: 16 },
   timePickerInner: {
     backgroundColor: '#ffffff',
     borderBottomLeftRadius: 12,

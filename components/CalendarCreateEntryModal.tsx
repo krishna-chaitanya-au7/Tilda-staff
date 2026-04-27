@@ -37,12 +37,16 @@ export type EventCreateFormData = {
   selectedClasses: string[];
 };
 
-export type CourseCreateFormData = {
-  title: string;
-  description: string;
+export type CourseSessionForm = {
   date: string;
   startTime: string;
   endTime: string;
+};
+
+export type CourseCreateFormData = {
+  title: string;
+  description: string;
+  sessions: CourseSessionForm[];
   room: string;
   audience: 'none' | 'daycare-only' | 'eaters-only' | 'class-specific';
   restrictedClasses: string[];
@@ -115,7 +119,7 @@ function hmFromDate(d: Date): string {
 }
 
 /** Visible on Android + matches web (switch left, label right). */
-const SWITCH_TRACK = { false: '#d1d5db', true: '#0a7ea4' } as const;
+const SWITCH_TRACK = { false: '#d1d5db', true: '#111827' } as const;
 
 export default function CalendarCreateEntryModal({
   visible,
@@ -149,9 +153,10 @@ export default function CalendarCreateEntryModal({
 
   const [courseTitle, setCourseTitle] = useState('');
   const [courseDescription, setCourseDescription] = useState('');
-  const [courseDate, setCourseDate] = useState('');
-  const [courseStartTime, setCourseStartTime] = useState('14:00');
-  const [courseEndTime, setCourseEndTime] = useState('15:30');
+  const [courseSessions, setCourseSessions] = useState<CourseSessionForm[]>(() => {
+    const t = formatLocalYYYYMMDD(new Date());
+    return [{ date: t, startTime: '14:00', endTime: '15:30' }];
+  });
   const [courseRoom, setCourseRoom] = useState('');
   const [courseAudience, setCourseAudience] = useState<CourseCreateFormData['audience']>('none');
   const [courseRestrictedClasses, setCourseRestrictedClasses] = useState<Set<string>>(new Set());
@@ -183,8 +188,12 @@ export default function CalendarCreateEntryModal({
     | { kind: 'subjectClass' | 'subjectDay' | 'subjectSlot' | 'subjectParent' | 'subjectChild'; key: number }
   >(null);
 
-  const [dateFocus, setDateFocus] = useState<null | 'eventStart' | 'eventEnd' | 'course'>(null);
-  const [timeFocus, setTimeFocus] = useState<null | 'eventStart' | 'eventEnd' | 'courseStart' | 'courseEnd'>(null);
+  const [dateFocus, setDateFocus] = useState<null | 'eventStart' | 'eventEnd' | { kind: 'course'; index: number }>(
+    null
+  );
+  const [timeFocus, setTimeFocus] = useState<
+    null | 'eventStart' | 'eventEnd' | { kind: 'course'; slot: 'start' | 'end'; index: number }
+  >(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -203,9 +212,7 @@ export default function CalendarCreateEntryModal({
 
     setCourseTitle('');
     setCourseDescription('');
-    setCourseDate(today);
-    setCourseStartTime('14:00');
-    setCourseEndTime('15:30');
+    setCourseSessions([{ date: today, startTime: '14:00', endTime: '15:30' }]);
     setCourseRoom('');
     setCourseAudience('none');
     setCourseRestrictedClasses(new Set(classes));
@@ -309,8 +316,24 @@ export default function CalendarCreateEntryModal({
   };
 
   const runCreateCourse = async () => {
-    if (!courseTitle.trim() || !courseDate) {
-      Alert.alert('Hinweis', 'Bitte Titel und Datum ausfüllen.');
+    if (!courseTitle.trim() || !Array.isArray(courseSessions) || courseSessions.length === 0) {
+      Alert.alert('Hinweis', 'Bitte Titel und mindestens einen Termin ausfüllen.');
+      return;
+    }
+    const sanitized = courseSessions
+      .map((session) => ({
+        date: String(session.date || ''),
+        startTime: String(session.startTime || ''),
+        endTime: String(session.endTime || ''),
+      }))
+      .filter((session) => session.date && session.startTime && session.endTime)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (sanitized.length === 0) {
+      Alert.alert('Hinweis', 'Bitte für jeden Termin Datum, Startzeit und Endzeit ausfüllen.');
+      return;
+    }
+    if (sanitized.some((s) => s.endTime <= s.startTime)) {
+      Alert.alert('Hinweis', 'Bei jedem Termin muss die Endzeit nach der Startzeit liegen.');
       return;
     }
     setSaving(true);
@@ -318,9 +341,7 @@ export default function CalendarCreateEntryModal({
       await onCreateCourse({
         title: courseTitle,
         description: courseDescription,
-        date: courseDate,
-        startTime: courseStartTime,
-        endTime: courseEndTime,
+        sessions: sanitized,
         room: courseRoom,
         audience: courseAudience,
         restrictedClasses: Array.from(courseRestrictedClasses),
@@ -548,29 +569,78 @@ export default function CalendarCreateEntryModal({
                   onChangeText={setCourseDescription}
                   multiline
                 />
-                <View style={styles.threeCol}>
-                  <View style={styles.col1}>
-                    <Text style={styles.lbl}>Datum</Text>
-                    <TouchableOpacity style={styles.fakeInput} onPress={() => setDateFocus('course')}>
-                      <Text>{format(parseYmd(courseDate), 'dd.MM.yyyy', { locale: de })}</Text>
-                      <Ionicons name="calendar-outline" size={18} color="#6b7280" />
-                    </TouchableOpacity>
+                <Text style={styles.lbl}>Termine</Text>
+                {courseSessions.map((session, idx) => (
+                  <View key={`cs-${idx}`} style={styles.courseSessionCard}>
+                    <View style={styles.courseSessionHeader}>
+                      <Text style={styles.courseSessionTitle}>Termin {idx + 1}</Text>
+                      {courseSessions.length > 1 ? (
+                        <TouchableOpacity
+                          onPress={() =>
+                            setCourseSessions((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          hitSlop={8}
+                          accessibilityLabel="Termin entfernen"
+                        >
+                          <Text style={styles.courseSessionRemove}>x</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <View style={styles.threeCol}>
+                      <View style={styles.col1}>
+                        <Text style={styles.lbl}>Datum</Text>
+                        <TouchableOpacity
+                          style={styles.fakeInput}
+                          onPress={() => setDateFocus({ kind: 'course', index: idx })}
+                        >
+                          <Text>{format(parseYmd(session.date), 'dd.MM.yyyy', { locale: de })}</Text>
+                          <Ionicons name="calendar-outline" size={18} color="#6b7280" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={styles.col1}>
+                        <Text style={styles.lbl}>Von</Text>
+                        <TouchableOpacity
+                          style={styles.fakeInput}
+                          onPress={() => setTimeFocus({ kind: 'course', slot: 'start', index: idx })}
+                        >
+                          <Text>{session.startTime}</Text>
+                          <Ionicons name="time-outline" size={18} color="#6b7280" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={styles.col1}>
+                        <Text style={styles.lbl}>Bis</Text>
+                        <TouchableOpacity
+                          style={styles.fakeInput}
+                          onPress={() => setTimeFocus({ kind: 'course', slot: 'end', index: idx })}
+                        >
+                          <Text>{session.endTime}</Text>
+                          <Ionicons name="time-outline" size={18} color="#6b7280" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   </View>
-                  <View style={styles.col1}>
-                    <Text style={styles.lbl}>Von</Text>
-                    <TouchableOpacity style={styles.fakeInput} onPress={() => setTimeFocus('courseStart')}>
-                      <Text>{courseStartTime}</Text>
-                      <Ionicons name="time-outline" size={18} color="#6b7280" />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.col1}>
-                    <Text style={styles.lbl}>Bis</Text>
-                    <TouchableOpacity style={styles.fakeInput} onPress={() => setTimeFocus('courseEnd')}>
-                      <Text>{courseEndTime}</Text>
-                      <Ionicons name="time-outline" size={18} color="#6b7280" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                ))}
+                <TouchableOpacity
+                  style={styles.addTerminBtn}
+                  onPress={() =>
+                    setCourseSessions((prev) => [
+                      ...prev,
+                      {
+                        date:
+                          prev.length > 0 && prev[prev.length - 1]?.date
+                            ? prev[prev.length - 1].date
+                            : formatLocalYYYYMMDD(new Date()),
+                        startTime: '14:00',
+                        endTime: '15:30',
+                      },
+                    ])
+                  }
+                  activeOpacity={0.7}
+                  accessibilityLabel="Termin hinzufügen"
+                >
+                  <Ionicons name="add" size={18} color="#fff" />
+                  <Text style={styles.addTerminBtnText}>Termin hinzufügen</Text>
+                </TouchableOpacity>
 
                 <Text style={styles.lbl}>Raum (optional)</Text>
                 <TouchableOpacity style={styles.fakeInput} onPress={() => setPickerSheet({ kind: 'courseRoom' })}>
@@ -882,7 +952,7 @@ export default function CalendarCreateEntryModal({
                 ? parseYmd(eventStartDate)
                 : dateFocus === 'eventEnd'
                   ? parseYmd(eventEndDate)
-                  : parseYmd(courseDate)
+                  : parseYmd(courseSessions[dateFocus.index]?.date || formatLocalYYYYMMDD(new Date()))
             }
             mode="date"
             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
@@ -892,7 +962,12 @@ export default function CalendarCreateEntryModal({
               const ymd = formatLocalYYYYMMDD(d);
               if (dateFocus === 'eventStart') setEventStartDate(ymd);
               else if (dateFocus === 'eventEnd') setEventEndDate(ymd);
-              else setCourseDate(ymd);
+              else {
+                const i = dateFocus.index;
+                setCourseSessions((prev) =>
+                  prev.map((row, j) => (j === i ? { ...row, date: ymd } : row))
+                );
+              }
             }}
           />
         ) : null}
@@ -909,14 +984,14 @@ export default function CalendarCreateEntryModal({
                 ? eventStartDate
                 : timeFocus === 'eventEnd'
                   ? eventEndDate
-                  : courseDate,
+                  : courseSessions[timeFocus.index]?.date || formatLocalYYYYMMDD(new Date()),
               timeFocus === 'eventStart'
                 ? eventStartTime
                 : timeFocus === 'eventEnd'
                   ? eventEndTime
-                  : timeFocus === 'courseStart'
-                    ? courseStartTime
-                    : courseEndTime
+                  : timeFocus.slot === 'start'
+                    ? courseSessions[timeFocus.index]?.startTime || '14:00'
+                    : courseSessions[timeFocus.index]?.endTime || '15:30'
             )}
             mode="time"
             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
@@ -926,8 +1001,21 @@ export default function CalendarCreateEntryModal({
               const hm = hmFromDate(d);
               if (timeFocus === 'eventStart') setEventStartTime(hm);
               else if (timeFocus === 'eventEnd') setEventEndTime(hm);
-              else if (timeFocus === 'courseStart') setCourseStartTime(hm);
-              else setCourseEndTime(hm);
+              else {
+                const i = timeFocus.index;
+                const slot = timeFocus.slot;
+                setCourseSessions((prev) =>
+                  prev.map((row, j) =>
+                    j === i
+                      ? {
+                          ...row,
+                          startTime: slot === 'start' ? hm : row.startTime,
+                          endTime: slot === 'end' ? hm : row.endTime,
+                        }
+                      : row
+                  )
+                );
+              }
             }}
           />
         ) : null}
@@ -1115,7 +1203,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
-  sheetTitle: { fontSize: 20, fontWeight: '700', color: '#0a7ea4' },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
   tabRow: {
     flexDirection: 'row',
     marginHorizontal: 12,
@@ -1157,6 +1245,49 @@ const styles = StyleSheet.create({
   },
   fakeInputDisabled: { opacity: 0.55 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
+  linkText: { fontSize: 14, fontWeight: '600', color: '#2563eb' },
+  courseSessionCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: '#fafafa',
+  },
+  courseSessionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  courseSessionTitle: { fontSize: 13, fontWeight: '700', color: '#374151' },
+  courseSessionRemove: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#6b7280',
+    lineHeight: 22,
+    paddingHorizontal: 4,
+    minWidth: 32,
+    textAlign: 'center',
+  },
+  addTerminBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    marginBottom: 2,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 0,
+    backgroundColor: '#111827',
+    gap: 6,
+  },
+  addTerminBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1196,7 +1327,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkBoxOn: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
+  checkBoxOn: { backgroundColor: '#111827', borderColor: '#111827' },
   checkLabel: { fontSize: 14, color: '#111827', flex: 1 },
   footerRow: {
     flexDirection: 'row',
@@ -1206,7 +1337,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   btnPrimary: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#111827',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
@@ -1245,13 +1376,13 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     backgroundColor: '#fff',
   },
-  mergeTabOn: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  mergeTabOn: { backgroundColor: '#111827', borderColor: '#111827' },
   mergeTabText: { fontSize: 12, color: '#374151' },
   mergeTabTextOn: { color: '#fff' },
   childList: { maxHeight: 160, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8 },
   muted: { padding: 8, fontSize: 13, color: '#6b7280' },
   iosDone: { alignItems: 'center', padding: 8, backgroundColor: '#fff' },
-  iosDoneText: { color: '#0a7ea4', fontWeight: '600' },
+  iosDoneText: { color: '#111827', fontWeight: '600' },
   pickBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',

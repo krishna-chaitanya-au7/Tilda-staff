@@ -238,11 +238,11 @@ const styles = StyleSheet.create({
   },
   bgGray: { backgroundColor: '#F3F4F6' },
   textGray: { color: '#374151' },
-  bgBlue: { backgroundColor: '#DBEAFE' },
+  bgBlue: { backgroundColor: '#F1F5F9' },
   textBlue: { color: '#1E40AF' },
   bgGreen: { backgroundColor: '#DCFCE7' },
   textGreen: { color: '#15803D' },
-  bgAmber: { backgroundColor: '#FEF3C7' },
+  bgAmber: { backgroundColor: '#F1F5F9' },
   textAmber: { color: '#92400E' },
 });
 

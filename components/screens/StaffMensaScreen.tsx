@@ -517,14 +517,14 @@ const styles = StyleSheet.create({
   warnBox: {
     marginTop: 12,
     padding: 12,
-    backgroundColor: '#fef9c3',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#fde047',
+    borderColor: '#D1D5DB',
   },
   warnTitle: { fontWeight: '700', color: '#854d0e' },
   warnBody: { color: '#713f12', marginTop: 6, fontSize: 14 },
-  err: { color: '#b91c1c', marginBottom: 8 },
+  err: { color: '#111827', marginBottom: 8 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -539,6 +539,6 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
   modalRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e5e7eb' },
-  modalRowSel: { backgroundColor: '#f0f9ff' },
+  modalRowSel: { backgroundColor: '#F8FAFC' },
   modalRowText: { fontSize: 16, color: '#111827' },
 });

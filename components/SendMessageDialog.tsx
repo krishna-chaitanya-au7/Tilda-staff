@@ -224,7 +224,7 @@ export default function SendMessageDialog({ open, onOpenChange, supervisorId, fa
 
           {step === 'success' ? (
              <View style={styles.successState}>
-                <Ionicons name="checkmark-circle" size={64} color="#4CAF50" />
+                <Ionicons name="checkmark-circle" size={64} color="#111827" />
                 <Text style={styles.successText}>Nachricht erfolgreich gesendet!</Text>
              </View>
           ) : (

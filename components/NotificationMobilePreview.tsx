@@ -110,15 +110,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
   },
-  /** Large preview: wider portrait frame (reads ~2 in+ on typical phone screens). */
+  /** Large preview: realistic 6-inch phone mockup (~300x600). */
   phoneLg: {
-    width: 232,
-    minHeight: 448,
+    width: 300,
+    minHeight: 600,
     alignSelf: 'center',
-    borderRadius: 32,
-    paddingHorizontal: 7,
-    paddingTop: 10,
-    paddingBottom: 8,
+    borderRadius: 40,
+    paddingHorizontal: 10,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderWidth: 4,
     justifyContent: 'flex-start',
   },
   notch: {
@@ -167,10 +168,10 @@ const styles = StyleSheet.create({
   },
   contentLg: {
     flex: 1,
-    minHeight: 292,
-    maxHeight: 420,
-    padding: 12,
-    borderRadius: 12,
+    minHeight: 440,
+    maxHeight: 560,
+    padding: 14,
+    borderRadius: 14,
   },
   msgTitle: {
     fontSize: 12,

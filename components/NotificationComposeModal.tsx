@@ -85,6 +85,7 @@ export default function NotificationComposeModal({
 }) {
   const insets = useSafeAreaInsets();
   const { width: winW } = useWindowDimensions();
+  const isMobile = winW < 480;
 
   const [step, setStep] = useState(0);
   const [data, setData] = useState<ComposeDraft>(emptyDraft);
@@ -470,48 +471,74 @@ export default function NotificationComposeModal({
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={[styles.fullRoot, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        style={[styles.fullRoot, { paddingTop: 0, paddingBottom: 0 }]}
       >
-        <View style={styles.sheet}>
-          <View style={styles.stepperTopRow}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.stepper}
-              style={styles.stepperScroll}
-            >
-              {STEPS.map((s, i) => (
-                <View key={s.key} style={styles.stepItem}>
-                  <View
-                    style={[
-                      styles.stepDot,
-                      i < step && styles.stepDotDone,
-                      i === step && styles.stepDotActive,
-                    ]}
-                  >
-                    {i < step ? (
-                      <Ionicons name="checkmark" size={16} color="#fff" />
-                    ) : (
-                      <Text style={styles.stepNum}>{i + 1}</Text>
-                    )}
+        <View style={[styles.sheet, { paddingTop: isMobile ? 8 : insets.top }]}>
+          <View style={[styles.stepperTopRow, isMobile && styles.stepperTopRowMobile]}>
+            {isMobile ? (
+              <View style={styles.stepperMobileRow}>
+                {STEPS.map((s, i) => (
+                  <View key={s.key} style={i < STEPS.length - 1 ? styles.stepItemMobileGrow : styles.stepItemMobile}>
+                    <View
+                      style={[
+                        styles.stepDot,
+                        styles.stepDotMobile,
+                        i < step && styles.stepDotDone,
+                        i === step && styles.stepDotActive,
+                      ]}
+                    >
+                      {i < step ? (
+                        <Ionicons name="checkmark" size={12} color="#fff" />
+                      ) : (
+                        <Text style={[styles.stepNum, { fontSize: 12 }, i === step && { color: '#fff' }]}>{i + 1}</Text>
+                      )}
+                    </View>
+                    {i < STEPS.length - 1 ? (
+                      <View style={[styles.stepLineMobile, i < step && styles.stepLineDone]} />
+                    ) : null}
                   </View>
-                  <Text style={[styles.stepLbl, i === step && styles.stepLblActive]} numberOfLines={1}>
-                    {s.title}
-                  </Text>
-                  {i < STEPS.length - 1 ? <View style={[styles.stepLine, i < step && styles.stepLineDone]} /> : null}
-                </View>
-              ))}
-            </ScrollView>
+                ))}
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.stepper}
+                style={styles.stepperScroll}
+              >
+                {STEPS.map((s, i) => (
+                  <View key={s.key} style={styles.stepItem}>
+                    <View
+                      style={[
+                        styles.stepDot,
+                        i < step && styles.stepDotDone,
+                        i === step && styles.stepDotActive,
+                      ]}
+                    >
+                      {i < step ? (
+                        <Ionicons name="checkmark" size={16} color="#fff" />
+                      ) : (
+                        <Text style={styles.stepNum}>{i + 1}</Text>
+                      )}
+                    </View>
+                    <Text style={[styles.stepLbl, i === step && styles.stepLblActive]} numberOfLines={1}>
+                      {s.title}
+                    </Text>
+                    {i < STEPS.length - 1 ? <View style={[styles.stepLine, i < step && styles.stepLineDone]} /> : null}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
             <TouchableOpacity onPress={onClose} hitSlop={14} style={styles.closeBtn} accessibilityLabel="Schließen">
-              <Ionicons name="close" size={24} color="#64748b" />
+              <Ionicons name="close" size={isMobile ? 22 : 24} color="#64748b" />
             </TouchableOpacity>
           </View>
 
           <View style={styles.stepperDivider} />
 
-          <Text style={styles.stepDesc}>{stepDescription}</Text>
+          {!isMobile && <Text style={styles.stepDesc}>{stepDescription}</Text>}
 
-          <View style={styles.body}>
+          <View style={[styles.body, isMobile && { backgroundColor: '#f3f4f6' }]}>
             {showSidePreview ? (
               <View style={styles.splitRow}>
                 <ScrollView
@@ -539,9 +566,9 @@ export default function NotificationComposeModal({
                 {step <= 2 ? (
                   <View style={styles.previewBelow}>
                     {data.type === 'print' ? (
-                      <NotificationPrintPreview data={data} compact />
+                      <NotificationPrintPreview data={data} large />
                     ) : (
-                      <NotificationMobilePreview data={data} variant="compact" />
+                      <NotificationMobilePreview data={data} variant="large" />
                     )}
                   </View>
                 ) : null}
@@ -549,27 +576,27 @@ export default function NotificationComposeModal({
             )}
           </View>
 
-          <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
-            <TouchableOpacity style={styles.btnOutline} onPress={prev} disabled={step === 0 || submitting}>
-              <Ionicons name="chevron-back" size={18} color="#64748b" style={styles.footerIconLeft} />
+          <View style={[styles.footer, isMobile && styles.footerMobile, { paddingBottom: 0 }]}>
+            <TouchableOpacity style={[styles.btnOutline, isMobile && styles.btnMobile]} onPress={prev} disabled={step === 0 || submitting}>
+              <Ionicons name="chevron-back" size={16} color="#64748b" style={styles.footerIconLeft} />
               <Text style={styles.btnOutlineText}>Zurück</Text>
             </TouchableOpacity>
             {!isLast ? (
-              <TouchableOpacity style={styles.btnPrimary} onPress={next} disabled={!valid || submitting}>
+              <TouchableOpacity style={[styles.btnPrimary, isMobile && styles.btnMobile]} onPress={next} disabled={!valid || submitting}>
                 <Text style={styles.btnPrimaryText}>Weiter</Text>
-                <Ionicons name="chevron-forward" size={18} color="#fff" style={styles.footerIconRight} />
+                <Ionicons name="chevron-forward" size={16} color="#fff" style={styles.footerIconRight} />
               </TouchableOpacity>
             ) : (
               <View style={styles.lastActions}>
-                <TouchableOpacity style={styles.btnOutline} onPress={runDraft} disabled={submitting}>
+                <TouchableOpacity style={[styles.btnOutline, isMobile && styles.btnMobile]} onPress={runDraft} disabled={submitting}>
                   <Text style={styles.btnOutlineText}>Entwurf</Text>
                 </TouchableOpacity>
                 {data.sendAtISO ? (
-                  <TouchableOpacity style={styles.btnPrimary} onPress={runSchedule} disabled={submitting}>
+                  <TouchableOpacity style={[styles.btnPrimary, isMobile && styles.btnMobile]} onPress={runSchedule} disabled={submitting}>
                     {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Planen</Text>}
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity style={styles.btnPrimary} onPress={runSend} disabled={submitting}>
+                  <TouchableOpacity style={[styles.btnPrimary, isMobile && styles.btnMobile]} onPress={runSend} disabled={submitting}>
                     {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Senden</Text>}
                   </TouchableOpacity>
                 )}
@@ -633,15 +660,22 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#e5e7eb',
     marginHorizontal: 0,
-    marginBottom: 12,
+    marginBottom: 4,
   },
-  previewBelow: { marginTop: 20, alignItems: 'center', paddingBottom: 16 },
+  previewBelow: { marginTop: 10, alignItems: 'center', paddingBottom: 0 },
   stepperTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingLeft: 8,
     paddingRight: 8,
     paddingTop: 4,
+  },
+  stepperTopRowMobile: {
+    paddingTop: 0,
+    paddingBottom: 0,
+    paddingLeft: 4,
+    paddingRight: 4,
+    alignItems: 'center',
   },
   stepperScroll: { flex: 1, minWidth: 0 },
   closeBtn: { paddingTop: 4, paddingLeft: 4 },
@@ -652,6 +686,33 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 4,
   },
+  stepperMobile: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    gap: 2,
+  },
+  stepperMobileRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  stepItemMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stepItemMobileGrow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stepLineMobile: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 4,
+  },
   stepItem: { flexDirection: 'row', alignItems: 'center' },
   stepDot: {
     width: 36,
@@ -661,14 +722,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  stepDotMobile: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
   stepDotActive: { backgroundColor: '#0f172a' },
-  stepDotDone: { backgroundColor: '#0a7ea4' },
+  stepDotDone: { backgroundColor: '#111827' },
   stepNum: { fontSize: 14, fontWeight: '600', color: '#6b7280' },
   stepNumCurrent: { color: '#fff' },
   stepLbl: { fontSize: 11, color: '#9ca3af', marginLeft: 4, maxWidth: 88 },
   stepLblActive: { color: '#111827', fontWeight: '600' },
   stepLine: { width: 16, height: 2, backgroundColor: '#e5e7eb', marginHorizontal: 4 },
-  stepLineDone: { backgroundColor: '#0a7ea4' },
+  stepLineDone: { backgroundColor: '#111827' },
   stepDesc: {
     fontSize: 14,
     color: '#64748b',
@@ -678,7 +744,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   body: { flex: 1, minHeight: 0 },
-  bodyContent: { paddingHorizontal: 16, paddingBottom: 24 },
+  bodyContent: { paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 },
   typeCardBox: {
     borderRadius: 16,
     borderWidth: 1,
@@ -726,7 +792,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxOn: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
+  checkboxOn: { backgroundColor: '#111827', borderColor: '#111827' },
   audName: { fontSize: 15, color: '#111827' },
   audKind: { fontSize: 12, color: '#9ca3af' },
   muted: { color: '#9ca3af', marginVertical: 8 },
@@ -737,9 +803,9 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#f9fafb',
   },
-  link: { color: '#0a7ea4', marginTop: 8, fontSize: 14 },
+  link: { color: '#111827', marginTop: 8, fontSize: 14 },
   doneIos: { alignItems: 'center', padding: 8 },
-  doneIosText: { color: '#0a7ea4', fontWeight: '600' },
+  doneIosText: { color: '#111827', fontWeight: '600' },
   previewLine: { fontSize: 14, color: '#374151', marginTop: 8, lineHeight: 20 },
   previewBold: { fontWeight: '700', color: '#111827' },
   footer: {
@@ -749,10 +815,21 @@ const styles = StyleSheet.create({
     width: '100%',
     flexWrap: 'wrap',
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 6,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#e5e7eb',
-    gap: 12,
+    gap: 8,
+    backgroundColor: '#fff',
+  },
+  footerMobile: {
+    flexWrap: 'nowrap',
+    paddingHorizontal: 10,
+    paddingTop: 0,
+  },
+  btnMobile: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    minWidth: 0,
   },
   btnOutline: {
     flexDirection: 'row',

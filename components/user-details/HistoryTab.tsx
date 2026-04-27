@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   errorText: {
-    color: '#B91C1C',
+    color: '#111827',
   },
   card: {
     backgroundColor: '#fff',

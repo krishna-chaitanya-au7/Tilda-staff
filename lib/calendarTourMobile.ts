@@ -49,7 +49,7 @@ export function buildCalendarTourSteps(includeSettingsStep: boolean): CalendarTo
       target: 'grid',
       title: 'Kalender',
       description:
-        'Hier siehst du alle Termine auf einen Blick. Tippe auf einen Eintrag, um Details anzuzeigen.',
+        'Hier siehst du alle Termine auf einen Blick. Klicke auf einen Eintrag, um Details anzuzeigen.',
     },
     {
       target: 'legend',

@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 // Tabs
 import MahlzeitenTab from '@/components/user-details/MahlzeitenTab';
@@ -96,7 +97,8 @@ export default function UserDetailsScreen() {
   }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isLandscape = width > 768; 
+  const isLandscape = width > 768;
+  const isMobile = useIsMobile();
 
   const [user, setUser] = useState<UserDetails | null>(null);
   const [guardians, setGuardians] = useState<Guardian[]>([]);
@@ -230,7 +232,7 @@ export default function UserDetailsScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.center}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color="#111827" />
       </ThemedView>
     );
   }
@@ -452,7 +454,7 @@ export default function UserDetailsScreen() {
   };
 
   const InfoItem = ({ label, value, fullWidth }: { label: string, value: string, fullWidth?: boolean }) => (
-    <View style={[styles.infoItem, fullWidth && { width: '100%' }]}>
+    <View style={[styles.infoItem, (fullWidth || isMobile) && { width: '100%' }]}>
         <Text style={styles.infoItemLabel}>{label}</Text>
         <Text style={styles.infoItemValue}>{value}</Text>
     </View>
@@ -477,7 +479,7 @@ export default function UserDetailsScreen() {
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#111827" />
         }
       >
          {/* Hero Section */}
@@ -516,7 +518,7 @@ export default function UserDetailsScreen() {
                      activeOpacity={0.7}
                   >
                      <View style={{flexDirection:'row', alignItems:'center', gap: 12, flex: 1}}>
-                        <Ionicons name={getTabIcon(activeTab) as any} size={20} color="#007AFF" />
+                        <Ionicons name={getTabIcon(activeTab) as any} size={20} color="#111827" />
                         <Text style={styles.activeTabTitle}>{activeTab}</Text>
                      </View>
                      <View style={styles.burgerMenuBtn}>
@@ -545,7 +547,7 @@ export default function UserDetailsScreen() {
       {/* Tab Selection Modal */}
       <Modal visible={showTabsMenu} transparent animationType="fade" onRequestClose={() => setShowTabsMenu(false)}>
          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowTabsMenu(false)}>
-            <View style={styles.menuContainer}>
+            <View style={[styles.menuContainer, isMobile && { width: Math.min(width - 32, 320) }]}>
                {tabs.map(tab => (
                   <TouchableOpacity 
                     key={tab} 
@@ -553,10 +555,10 @@ export default function UserDetailsScreen() {
                     onPress={() => { setActiveTab(tab); setShowTabsMenu(false); }}
                   >
                      <View style={{flexDirection:'row', alignItems:'center', gap: 10}}>
-                        <Ionicons name={getTabIcon(tab) as any} size={18} color={activeTab === tab ? '#007AFF' : '#666'} />
+                        <Ionicons name={getTabIcon(tab) as any} size={18} color={activeTab === tab ? '#111827' : '#666'} />
                         <Text style={[styles.menuItemText, activeTab === tab && styles.menuItemTextSelected]}>{tab}</Text>
                      </View>
-                     {activeTab === tab && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                     {activeTab === tab && <Ionicons name="checkmark" size={16} color="#111827" />}
                   </TouchableOpacity>
                ))}
             </View>
@@ -581,14 +583,14 @@ const styles = StyleSheet.create({
   },
   // Hero
   heroSection: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#111827',
     paddingTop: 60,
     paddingBottom: 40,
     paddingHorizontal: 20,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
     marginBottom: 20,
-    shadowColor: '#007AFF',
+    shadowColor: '#111827',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -624,7 +626,7 @@ const styles = StyleSheet.create({
   heroAvatarText: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#007AFF',
+    color: '#111827',
   },
   heroName: {
     fontSize: 24,
@@ -785,12 +787,12 @@ const styles = StyleSheet.create({
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#111827',
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 24,
     gap: 8,
-    shadowColor: '#FF3B30',
+    shadowColor: '#111827',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -828,7 +830,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   menuItemSelected: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#F8FAFC',
   },
   menuItemText: {
     fontSize: 16,
@@ -836,6 +838,6 @@ const styles = StyleSheet.create({
   },
   menuItemTextSelected: {
     fontWeight: '600',
-    color: '#007AFF',
+    color: '#111827',
   },
 });

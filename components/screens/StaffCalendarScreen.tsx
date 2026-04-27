@@ -28,6 +28,7 @@ import CalendarCreateEntryModal, {
 } from '@/components/CalendarCreateEntryModal';
 import CalendarTourModal, { type HoleRect } from '@/components/CalendarTourModal';
 import { useRouter } from 'expo-router';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { buildCalendarTourSteps, type TourTarget } from '@/lib/calendarTourMobile';
 import {
   eachDayOfInterval,
@@ -64,6 +65,8 @@ import {
   getMonday,
   getMonthNameDe,
   parseISODateLocal,
+  facilityCourseLegacyEvents,
+  facilityCourseSessionEvents,
   withAcademicYear,
 } from '@/lib/studentPlanCalendar';
 
@@ -136,6 +139,7 @@ export default function StaffCalendarScreen({
   const tabBarHeight = useBottomTabBarHeight();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const isMobile = useIsMobile();
   const rootBottomPad = (tabBarHeight > 0 ? tabBarHeight : insets.bottom) + 8;
 
   const [scope, setScope] = useState<Scope | null>(null);
@@ -206,7 +210,7 @@ export default function StaffCalendarScreen({
   const [endTime, setEndTime] = useState('10:00');
   const [location, setLocation] = useState('');
   const [category, setCategory] = useState('general');
-  const [color, setColor] = useState('#38bdf8');
+  const [color, setColor] = useState('#6B7280');
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end' | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -216,6 +220,15 @@ export default function StaffCalendarScreen({
   const [tourIndex, setTourIndex] = useState<number | null>(null);
   const [tourHoleRect, setTourHoleRect] = useState<HoleRect | null>(null);
   const tourAnchorRefs = useRef<Partial<Record<TourTarget, View | null>>>({});
+  const makeAnchorProps = useCallback(
+    (target: TourTarget) => ({
+      collapsable: false as const,
+      ref: (el: View | null) => {
+        tourAnchorRefs.current[target] = el;
+      },
+    }),
+    []
+  );
 
   const router = useRouter();
   const scheduleFacilityId = scope ? primaryFacilityIdFromScope(scope) : '';
@@ -229,7 +242,6 @@ export default function StaffCalendarScreen({
   const tourSteps = useMemo(() => buildCalendarTourSteps(canSettings), [canSettings]);
 
   const startCalendarTour = useCallback(() => {
-    setViewMode('week');
     setTourIndex(0);
   }, []);
 
@@ -245,22 +257,57 @@ export default function StaffCalendarScreen({
     }
     const target = tourSteps[tourIndex]?.target;
     if (!target) return;
-    const t = setTimeout(() => {
+
+    const MIN_Y = insets.top + 20;
+    const isSane = (r: HoleRect) => r.w > 0 && r.h >= 10 && r.y >= MIN_Y;
+
+    // Always measure fresh when a tour step activates. Early onLayout captures are
+    // unreliable on Android — a measurement taken during initial layout can be
+    // stale relative to the final painted positions of sibling elements above.
+    // Clear the previous step's spotlight immediately to avoid a flash of the wrong rect.
+    setTourHoleRect(null);
+
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 10;
+
+    const takeMeasure = () => {
+      if (cancelled) return;
       const node = tourAnchorRefs.current[target];
       if (!node) {
-        setTourHoleRect(null);
+        attempt += 1;
+        if (attempt < maxAttempts) setTimeout(takeMeasure, 150);
         return;
       }
-      node.measureInWindow((x, y, w, h) => {
-        if (w > 0 && h > 0) {
-          setTourHoleRect({ x, y, w, h });
-        } else {
-          setTourHoleRect(null);
-        }
+      // requestAnimationFrame ensures the next paint has committed before we measure.
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const n = tourAnchorRefs.current[target];
+        if (!n) return;
+        // Use measure() — on Android its pageX/pageY values are more reliable than
+        // measureInWindow for elements that have just been re-laid-out.
+        n.measure((_fx: number, _fy: number, w: number, h: number, px: number, py: number) => {
+          if (cancelled) return;
+          const r = { x: px, y: py, w, h };
+          if (__DEV__) {
+            console.log(`[tour] ${target} measure:`, r);
+          }
+          if (isSane(r)) {
+            setTourHoleRect(r);
+          } else {
+            attempt += 1;
+            if (attempt < maxAttempts) setTimeout(takeMeasure, 150);
+          }
+        });
       });
-    }, 140);
-    return () => clearTimeout(t);
-  }, [tourIndex, tourSteps, viewMode, assignmentsLoading, width]);
+    };
+
+    const initial = setTimeout(takeMeasure, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(initial);
+    };
+  }, [tourIndex, tourSteps, viewMode, assignmentsLoading, width, insets.top]);
 
   useEffect(() => {
     setSelectedEntityId('');
@@ -764,6 +811,7 @@ export default function StaffCalendarScreen({
             }
           : getFacilityEventsVisibleRange(weekOf, viewMode);
       const rangeOr = `and(start_date.lte.${end},end_date.gte.${start})`;
+      const yearNum = Number(selectedAcademicYearId);
 
       const { data: eventRows, error: evErr } = await supabase
         .from('facility_events')
@@ -771,19 +819,32 @@ export default function StaffCalendarScreen({
           'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal, event_type'
         )
         .in('facility_id', eventFacilityIds)
-        .eq('academic_year', Number(selectedAcademicYearId))
+        .eq('academic_year', yearNum)
         .or(rangeOr);
       if (evErr) throw evErr;
 
-      const { data: courseRows, error: courseErr } = await supabase
-        .from('facility_courses')
-        .select(
-          'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal'
-        )
+      const courseSelect =
+        'id, title, description, start_date, end_date, start_time, end_time, all_day, location, color, category, target_classes, cancel_meal';
+
+      const { data: sessionRowsRaw, error: sessionRangeErr } = await supabase
+        .from('facility_course_schedule_days')
+        .select('id, course_id, session_date, start_time, end_time')
         .in('facility_id', eventFacilityIds)
-        .eq('academic_year', Number(selectedAcademicYearId))
-        .or(rangeOr);
-      if (courseErr) throw courseErr;
+        .eq('academic_year', yearNum)
+        .gte('session_date', start)
+        .lte('session_date', end);
+
+      const { data: anySchedRows, error: anySchedErr } = await supabase
+        .from('facility_course_schedule_days')
+        .select('course_id')
+        .in('facility_id', eventFacilityIds)
+        .eq('academic_year', yearNum);
+
+      const scheduleTableOk = !sessionRangeErr && !anySchedErr;
+      const courseIdsWithAnySchedule = new Set<string>();
+      (anySchedRows || []).forEach((r: any) => {
+        if (r?.course_id) courseIdsWithAnySchedule.add(String(r.course_id));
+      });
 
       const events: FacilityEventItem[] = (eventRows || []).map((row: any) => ({
         id: String(row.id),
@@ -802,24 +863,71 @@ export default function StaffCalendarScreen({
         cancel_meal: row.cancel_meal,
         event_type: row.event_type === 'course' ? 'course' : 'event',
       }));
-      const courses: FacilityEventItem[] = (courseRows || []).map((row: any) => ({
-        id: String(row.id),
-        sourceTable: 'facility_courses' as const,
-        title: String(row.title || ''),
-        description: row.description,
-        start_date: String(row.start_date),
-        end_date: String(row.end_date),
-        start_time: row.start_time,
-        end_time: row.end_time,
-        all_day: !!row.all_day,
-        location: row.location,
-        color: row.color,
-        category: row.category,
-        target_classes: row.target_classes,
-        cancel_meal: row.cancel_meal,
-        event_type: 'course' as const,
-      }));
-      setFacilityEvents([...events, ...courses]);
+
+      if (!scheduleTableOk) {
+        const { data: courseRows, error: courseErr } = await supabase
+          .from('facility_courses')
+          .select(courseSelect)
+          .in('facility_id', eventFacilityIds)
+          .eq('academic_year', yearNum)
+          .or(rangeOr);
+        if (courseErr) throw courseErr;
+        const legacyCourses = (courseRows || []).map((row: any) => ({
+          id: String(row.id),
+          sourceTable: 'facility_courses' as const,
+          title: String(row.title || ''),
+          description: row.description,
+          start_date: String(row.start_date),
+          end_date: String(row.end_date),
+          start_time: row.start_time,
+          end_time: row.end_time,
+          all_day: !!row.all_day,
+          location: row.location,
+          color: row.color,
+          category: row.category,
+          target_classes: row.target_classes,
+          cancel_meal: row.cancel_meal,
+          event_type: 'course' as const,
+        }));
+        setFacilityEvents([...events, ...legacyCourses]);
+        return;
+      }
+
+      const courseSessionInRange = (sessionRowsRaw || []) as Array<{
+        id: string;
+        course_id: string;
+        session_date: string;
+        start_time: string | null;
+        end_time: string | null;
+      }>;
+      const sessionCourseIdList = [
+        ...new Set(courseSessionInRange.map((s) => String(s.course_id || '')).filter(Boolean)),
+      ];
+
+      const courseById = new Map<string, any>();
+      if (sessionCourseIdList.length) {
+        const { data: courseMetaRows, error: metaErr } = await supabase
+          .from('facility_courses')
+          .select(courseSelect)
+          .in('id', sessionCourseIdList);
+        if (metaErr) throw metaErr;
+        (courseMetaRows || []).forEach((row: any) => {
+          if (row?.id != null) courseById.set(String(row.id), row);
+        });
+      }
+
+      const fromSessions = facilityCourseSessionEvents(courseSessionInRange, courseById);
+
+      const { data: courseRows, error: courseErr } = await supabase
+        .from('facility_courses')
+        .select(courseSelect)
+        .in('facility_id', eventFacilityIds)
+        .eq('academic_year', yearNum)
+        .or(rangeOr);
+      if (courseErr) throw courseErr;
+
+      const fromLegacy = facilityCourseLegacyEvents(courseRows, courseIdsWithAnySchedule);
+      setFacilityEvents([...events, ...fromSessions, ...fromLegacy]);
     } catch {
       setFacilityEvents((prev) => (prev.length === 0 ? prev : EMPTY_FACILITY_EVENTS));
     }
@@ -899,31 +1007,78 @@ export default function StaffCalendarScreen({
   const handleCreateEntryCourse = useCallback(
     async (data: CourseCreateFormData) => {
       if (!scheduleFacilityId || !selectedAcademicYearId) return;
+      const sanitizedSessions = data.sessions
+        .map((session) => ({
+          date: String(session.date || ''),
+          startTime: String(session.startTime || ''),
+          endTime: String(session.endTime || ''),
+        }))
+        .filter((session) => session.date && session.startTime && session.endTime)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (sanitizedSessions.length === 0) {
+        Alert.alert('Hinweis', 'Bitte für jeden Termin Datum, Startzeit und Endzeit ausfüllen.');
+        return;
+      }
+      const invalidSession = sanitizedSessions.find((session) => session.endTime <= session.startTime);
+      if (invalidSession) {
+        Alert.alert('Hinweis', 'Bei jedem Termin muss die Endzeit nach der Startzeit liegen.');
+        return;
+      }
+      const startDate = sanitizedSessions[0].date;
+      const endDate = sanitizedSessions[sanitizedSessions.length - 1].date;
       const targetClasses =
         data.audience === 'class-specific' ? data.restrictedClasses : classes;
-      const { error } = await supabase.from('facility_courses').insert({
+      const yearNum = Number(selectedAcademicYearId);
+
+      const { data: insertedCourse, error: insertCourseError } = await supabase
+        .from('facility_courses')
+        .insert({
+          facility_id: scheduleFacilityId,
+          academic_year: yearNum,
+          title: data.title.trim(),
+          description: data.description.trim() || null,
+          start_date: startDate,
+          end_date: endDate,
+          start_time: `${sanitizedSessions[0].startTime}:00`,
+          end_time: `${sanitizedSessions[0].endTime}:00`,
+          all_day: false,
+          location: data.room.trim() || null,
+          color: 'bg-violet-400/70',
+          category: 'other',
+          target_classes: targetClasses,
+          cancel_meal: data.cancelMeal,
+          max_participants: data.maxParticipants === '' ? null : Number(data.maxParticipants),
+          price: paymentsEnabled && data.price !== '' ? Number(data.price) : null,
+          billable: data.billable,
+          audience: data.audience,
+          created_by: staffCtx?.staffUserId ?? null,
+        })
+        .select('id')
+        .single();
+
+      if (insertCourseError) {
+        Alert.alert('Fehler', insertCourseError.message);
+        return;
+      }
+      if (!insertedCourse?.id) {
+        Alert.alert('Fehler', 'Kurs konnte nicht erstellt werden.');
+        return;
+      }
+
+      const sessionPayload = sanitizedSessions.map((session) => ({
         facility_id: scheduleFacilityId,
-        academic_year: Number(selectedAcademicYearId),
-        title: data.title.trim(),
-        description: data.description.trim() || null,
-        start_date: data.date,
-        end_date: data.date,
-        start_time: `${data.startTime}:00`,
-        end_time: `${data.endTime}:00`,
-        all_day: false,
-        location: data.room.trim() || null,
-        color: 'bg-violet-400/70',
-        category: 'other',
-        target_classes: targetClasses,
-        cancel_meal: data.cancelMeal,
-        max_participants: data.maxParticipants === '' ? null : Number(data.maxParticipants),
-        price: paymentsEnabled && data.price !== '' ? Number(data.price) : null,
-        billable: data.billable,
-        audience: data.audience,
-        created_by: staffCtx?.staffUserId ?? null,
-      });
-      if (error) {
-        Alert.alert('Fehler', error.message);
+        academic_year: yearNum,
+        course_id: insertedCourse.id,
+        session_date: session.date,
+        start_time: `${session.startTime}:00`,
+        end_time: `${session.endTime}:00`,
+      }));
+      const { error: sessionInsertError } = await supabase
+        .from('facility_course_schedule_days')
+        .insert(sessionPayload);
+      if (sessionInsertError) {
+        await supabase.from('facility_courses').delete().eq('id', insertedCourse.id);
+        Alert.alert('Fehler', sessionInsertError.message);
         return;
       }
       await loadFacilityEvents();
@@ -1266,10 +1421,7 @@ export default function StaffCalendarScreen({
 
   const renderCalendarLegend = () => (
     <View
-      collapsable={false}
-      ref={(el) => {
-        tourAnchorRefs.current.legend = el;
-      }}
+      {...makeAnchorProps('legend')}
       style={styles.legendBar}
     >
       <View style={styles.legendRow}>
@@ -1304,17 +1456,47 @@ export default function StaffCalendarScreen({
   return (
     <View style={[styles.root, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD, paddingBottom: rootBottomPad }]}>
       <View style={styles.mainColumn}>
-      <View style={styles.headerRow}>
-        <Text style={styles.h1} numberOfLines={1}>
+      <View style={[styles.headerRow, isMobile && { marginBottom: 6 }]}>
+        <Text style={[styles.h1, isMobile && { fontSize: 18 }]} numberOfLines={1}>
           Kalender
         </Text>
         <View style={styles.headerActions}>
-          <TouchableOpacity onPress={startCalendarTour} style={styles.iconBtn} accessibilityLabel="Kalenderhilfe">
-            <Ionicons name="help-circle-outline" size={22} color="#374151" />
+          <TouchableOpacity
+            onPress={startCalendarTour}
+            style={[styles.iconBtn, isMobile && calMobileStyles.headerIconBtn]}
+            accessibilityLabel="Kalenderhilfe"
+            hitSlop={8}
+          >
+            <Ionicons name="help-circle-outline" size={isMobile ? 20 : 22} color="#374151" />
           </TouchableOpacity>
+          {/* Settings icon — mobile only (tablet keeps it in the toolbar row below). */}
+          {isMobile && canSettings ? (
+            <View {...makeAnchorProps('settings')}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!selectedAcademicYearId) {
+                    Alert.alert('Schuljahr', 'Bitte wählen Sie zuerst ein Schuljahr aus (oben rechts).');
+                    return;
+                  }
+                  router.push({
+                    pathname: '/plan-settings',
+                    params: {
+                      facilityId: scheduleFacilityId,
+                      academicYearId: selectedAcademicYearId,
+                    },
+                  });
+                }}
+                style={calMobileStyles.headerIconBtn}
+                accessibilityLabel="Einstellungen"
+                hitSlop={8}
+              >
+                <Ionicons name="settings-outline" size={20} color="#374151" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <TouchableOpacity
             onPress={() => setYearPickerOpen(true)}
-            style={styles.yearChip}
+            style={[styles.yearChip, isMobile && { maxWidth: 140, paddingHorizontal: 8, paddingVertical: 8 }]}
             accessibilityLabel="Schuljahr auswählen"
           >
             <Text style={styles.yearChipText} numberOfLines={1}>
@@ -1327,11 +1509,8 @@ export default function StaffCalendarScreen({
 
       <View style={styles.toolbarRow}>
         <View
-          collapsable={false}
-          ref={(el) => {
-            tourAnchorRefs.current.perspective = el;
-          }}
-          style={styles.tabsScroll}
+          {...makeAnchorProps('perspective')}
+          style={[styles.tabsScroll, isMobile && calMobileStyles.tabsScrollMobile]}
         >
           <ScrollView
             horizontal
@@ -1356,47 +1535,59 @@ export default function StaffCalendarScreen({
             ))}
           </ScrollView>
         </View>
-        <View style={styles.toolbarRight}>
-          {canSettings ? (
-            <View
-              collapsable={false}
-              ref={(el) => {
-                tourAnchorRefs.current.settings = el;
-              }}
-            >
+        {!isMobile && (
+          <View style={styles.toolbarRight}>
+            {canSettings ? (
+              <View {...makeAnchorProps('settings')}>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!selectedAcademicYearId) {
+                      Alert.alert('Schuljahr', 'Bitte wählen Sie zuerst ein Schuljahr aus (oben rechts).');
+                      return;
+                    }
+                    router.push({
+                      pathname: '/plan-settings',
+                      params: {
+                        facilityId: scheduleFacilityId,
+                        academicYearId: selectedAcademicYearId,
+                      },
+                    });
+                  }}
+                  style={styles.iconBtn}
+                  accessibilityLabel="Einstellungen"
+                >
+                  <Ionicons name="settings-outline" size={22} color="#374151" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            <View {...makeAnchorProps('add')}>
               <TouchableOpacity
-                onPress={() => {
-                  if (!selectedAcademicYearId) {
-                    Alert.alert('Schuljahr', 'Bitte wählen Sie zuerst ein Schuljahr aus (oben rechts).');
-                    return;
-                  }
-                  router.push({
-                    pathname: '/plan-settings',
-                    params: {
-                      facilityId: scheduleFacilityId,
-                      academicYearId: selectedAcademicYearId,
-                    },
-                  });
-                }}
-                style={styles.iconBtn}
-                accessibilityLabel="Einstellungen"
+                style={styles.addEntryBtn}
+                onPress={() => openCreate()}
+                accessibilityLabel="Eintrag hinzufügen"
               >
-                <Ionicons name="settings-outline" size={22} color="#374151" />
+                <Text style={styles.addEntryBtnText}>Eintrag hinzufügen</Text>
               </TouchableOpacity>
             </View>
-          ) : null}
-          <View
-            collapsable={false}
-            ref={(el) => {
-              tourAnchorRefs.current.add = el;
-            }}
-          >
-            <TouchableOpacity style={styles.addEntryBtn} onPress={() => openCreate()}>
-              <Text style={styles.addEntryBtnText}>Eintrag hinzufügen</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Mobile: "+ Neu" button on its own right-aligned row below the tabs. */}
+      {isMobile && (
+        <View style={calMobileStyles.addRow}>
+          <View {...makeAnchorProps('add')}>
+            <TouchableOpacity
+              style={calMobileStyles.addBtnMobile}
+              onPress={() => openCreate()}
+              accessibilityLabel="Eintrag hinzufügen"
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+              <Text style={calMobileStyles.addBtnMobileText}>Eintrag hinzufügen</Text>
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      )}
 
       {entityOptions.length > 0 && perspective !== 'school' ? (
         <TouchableOpacity style={styles.entitySelect} onPress={() => setEntityPickerOpen(true)}>
@@ -1410,10 +1601,7 @@ export default function StaffCalendarScreen({
       ) : null}
 
       <View
-        collapsable={false}
-        ref={(el) => {
-          tourAnchorRefs.current.nav = el;
-        }}
+        {...makeAnchorProps('nav')}
         style={styles.navBar}
       >
         <View style={styles.navLeft}>
@@ -1430,7 +1618,7 @@ export default function StaffCalendarScreen({
               }
             }}
           >
-            <Ionicons name="chevron-back" size={24} color="#0a7ea4" />
+            <Ionicons name="chevron-back" size={24} color="#111827" />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => {
@@ -1442,7 +1630,7 @@ export default function StaffCalendarScreen({
               }
             }}
           >
-            <Ionicons name="chevron-forward" size={24} color="#0a7ea4" />
+            <Ionicons name="chevron-forward" size={24} color="#111827" />
           </TouchableOpacity>
           <Text style={styles.periodLabel}>{periodLabel}</Text>
         </View>
@@ -1484,10 +1672,7 @@ export default function StaffCalendarScreen({
           >
             <View
               style={{ minWidth: Math.max(gridMinWidth, width - 16) }}
-              collapsable={false}
-              ref={(el) => {
-                tourAnchorRefs.current.grid = el;
-              }}
+              {...makeAnchorProps('grid')}
             >
             <View style={styles.gridHeaderRow}>
               <View style={[styles.hdrStunde, { width: TIME_COL_W }]}>
@@ -1742,7 +1927,7 @@ export default function StaffCalendarScreen({
                   }}
                 >
                   <Text style={styles.pickRowText}>{y.label}</Text>
-                  {y.id === selectedAcademicYearId ? <Ionicons name="checkmark" size={20} color="#0a7ea4" /> : null}
+                  {y.id === selectedAcademicYearId ? <Ionicons name="checkmark" size={20} color="#111827" /> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -1765,7 +1950,7 @@ export default function StaffCalendarScreen({
                   }}
                 >
                   <Text style={styles.pickRowText}>{e.name}</Text>
-                  {e.id === selectedEntityId ? <Ionicons name="checkmark" size={20} color="#0a7ea4" /> : null}
+                  {e.id === selectedEntityId ? <Ionicons name="checkmark" size={20} color="#111827" /> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -1826,7 +2011,7 @@ export default function StaffCalendarScreen({
                   }}
                 >
                   <Text style={styles.pickRowText}>{ro}</Text>
-                  {location === ro ? <Ionicons name="checkmark" size={20} color="#0a7ea4" /> : null}
+                  {location === ro ? <Ionicons name="checkmark" size={20} color="#111827" /> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -2016,7 +2201,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginRight: -1,
   },
-  perspectiveTabActive: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
+  perspectiveTabActive: { backgroundColor: '#111827', borderColor: '#111827' },
   perspectiveTabText: { fontSize: 11, fontWeight: '600', color: '#6b7280' },
   perspectiveTabTextActive: { color: '#fff' },
   entitySelect: {
@@ -2065,7 +2250,7 @@ const styles = StyleSheet.create({
   periodLabel: { fontSize: 13, fontWeight: '600', color: '#111827', marginLeft: 4, flexShrink: 1 },
   segment: { flexDirection: 'row', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 6, overflow: 'hidden' },
   segmentBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#fff' },
-  segmentBtnActive: { backgroundColor: '#0a7ea4' },
+  segmentBtnActive: { backgroundColor: '#111827' },
   segmentText: { fontSize: 11, fontWeight: '600', color: '#6b7280' },
   segmentTextActive: { color: '#fff' },
   gridHeaderRow: { flexDirection: 'row', borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f3f4f6' },
@@ -2082,12 +2267,12 @@ const styles = StyleSheet.create({
   hdrDayText: { fontSize: 10, fontWeight: '600', color: '#111827', textAlign: 'center' },
   closingBadge: {
     marginTop: 2,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#b91c1c' },
+  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#111827' },
   gridRow: { flexDirection: 'row', borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#e5e7eb' },
   timeCell: {
     paddingVertical: 3,
@@ -2135,7 +2320,7 @@ const styles = StyleSheet.create({
   lessonTitle: { color: '#fff', fontSize: 11, fontWeight: '700' },
   lessonSub: { color: 'rgba(255,255,255,0.9)', fontSize: 9, marginTop: 2 },
   emptyGrid: { padding: 16, color: '#6b7280', textAlign: 'center' },
-  err: { color: '#b91c1c', marginBottom: 8 },
+  err: { color: '#111827', marginBottom: 8 },
   legendBar: {
     width: '100%',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -2163,8 +2348,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
-  navBtn: { fontSize: 22, color: '#0a7ea4', fontWeight: '700', paddingHorizontal: 8 },
-  todayBtn: { fontSize: 14, color: '#0a7ea4', fontWeight: '600' },
+  navBtn: { fontSize: 22, color: '#111827', fontWeight: '700', paddingHorizontal: 8 },
+  todayBtn: { fontSize: 14, color: '#111827', fontWeight: '600' },
   monthTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginLeft: 8 },
   weekRow: { flexDirection: 'row', marginTop: 4 },
   weekHdr: { textAlign: 'center', fontSize: 12, color: '#6b7280', fontWeight: '600' },
@@ -2211,10 +2396,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   cellMuted: { backgroundColor: '#f3f4f6' },
-  cellSel: { backgroundColor: '#e0f2fe', borderColor: '#0a7ea4' },
+  cellSel: { backgroundColor: '#F1F5F9', borderColor: '#111827' },
   cellNum: { fontSize: 16, fontWeight: '600', color: '#111827', alignSelf: 'flex-start' },
   cellNumMuted: { color: '#9ca3af' },
-  cellNumSel: { color: '#0a7ea4' },
+  cellNumSel: { color: '#111827' },
   pickBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -2269,13 +2454,13 @@ const styles = StyleSheet.create({
   },
   dateBtn: { padding: 12, backgroundColor: '#f3f4f6', borderRadius: 10, marginBottom: 8 },
   dateBtnText: { fontSize: 15, color: '#111827' },
-  donePicker: { textAlign: 'center', color: '#0a7ea4', fontWeight: '600', marginVertical: 8 },
+  donePicker: { textAlign: 'center', color: '#111827', fontWeight: '600', marginVertical: 8 },
   modalActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16, justifyContent: 'flex-end' },
-  btnPrimary: { backgroundColor: '#0a7ea4', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 10 },
+  btnPrimary: { backgroundColor: '#111827', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 10 },
   btnPrimaryText: { color: '#fff', fontWeight: '700' },
   btnSecondary: { paddingVertical: 12, paddingHorizontal: 14 },
   btnDanger: { paddingVertical: 12, paddingHorizontal: 14, marginRight: 'auto' },
-  btnDangerText: { color: '#b91c1c', fontWeight: '600' },
+  btnDangerText: { color: '#111827', fontWeight: '600' },
   editSectionLabel: { fontSize: 13, fontWeight: '600', color: '#111827', marginBottom: 6, marginTop: 4 },
   editClassGrid: {
     flexDirection: 'row',
@@ -2297,6 +2482,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  editCheckOn: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
+  editCheckOn: { backgroundColor: '#111827', borderColor: '#111827' },
   editClassText: { fontSize: 14, color: '#111827', flex: 1 },
+});
+
+const calMobileStyles = StyleSheet.create({
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabsScrollMobile: {
+    width: '100%',
+    flexGrow: 1,
+    marginBottom: 8,
+  },
+  addRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 8,
+  },
+  addBtnMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#111827',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  addBtnMobileText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
 });

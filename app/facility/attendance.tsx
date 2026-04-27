@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -17,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { supabase } from '@/lib/supabase';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import AttendanceEmbeddedWeekCalendar from '@/components/AttendanceEmbeddedWeekCalendar';
 import AttendanceLogsPanel from '@/components/AttendanceLogsPanel';
 import SendMessageDialog from '@/components/SendMessageDialog';
@@ -72,6 +74,224 @@ const StatsCard = ({ title, value, color = '#000', bgColor = '#F5F5F5', showInfo
   </View>
 );
 
+const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    contentContainerStyle={mobileStyles.statStripContent}
+    style={mobileStyles.statStrip}
+  >
+    <View style={[mobileStyles.statPill, { backgroundColor: '#E3F2FD' }]}>
+      <Text style={[mobileStyles.statPillValue, { color: '#1565C0' }]}>{stats.total}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#1565C0' }]}>Betreuung</Text>
+    </View>
+    <View style={[mobileStyles.statPill, { backgroundColor: '#E8F5E9' }]}>
+      <Text style={[mobileStyles.statPillValue, { color: '#2E7D32' }]}>{stats.active}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#2E7D32' }]}>Heute</Text>
+    </View>
+    <TouchableOpacity
+      onPress={stats.sick > 0 ? onInfoPressSick : undefined}
+      activeOpacity={stats.sick > 0 ? 0.7 : 1}
+      style={[mobileStyles.statPill, { backgroundColor: '#FFEBEE' }]}
+    >
+      <Text style={[mobileStyles.statPillValue, { color: '#C62828' }]}>{stats.sick}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#C62828' }]}>Krank</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      onPress={stats.bus > 0 ? onInfoPressBus : undefined}
+      activeOpacity={stats.bus > 0 ? 0.7 : 1}
+      style={[mobileStyles.statPill, { backgroundColor: '#FFF3E0' }]}
+    >
+      <Text style={[mobileStyles.statPillValue, { color: '#EF6C00' }]}>{stats.bus}</Text>
+      <Text style={[mobileStyles.statPillLabel, { color: '#EF6C00' }]}>Bus</Text>
+    </TouchableOpacity>
+  </ScrollView>
+);
+
+const mobileStyles = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginHorizontal: 8,
+    marginVertical: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  cardSelected: { borderColor: '#111827', backgroundColor: '#F8FAFC' },
+  avatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  body: { flex: 1, minWidth: 0 },
+  name: { fontSize: 15, fontWeight: '600', color: '#0F172A' },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 },
+  metaText: { fontSize: 12, color: '#64748B' },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  pill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+  },
+  pillText: { fontSize: 11, fontWeight: '600' },
+  actions: { alignItems: 'flex-end', gap: 4 },
+  statusBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
+    minWidth: 72, justifyContent: 'center',
+  },
+  statusBtnText: { fontSize: 13, fontWeight: '700' },
+  quickStatus: { flexDirection: 'row', gap: 8 },
+  quickBtn: { padding: 2 },
+  statStrip: { marginBottom: 12 },
+  statStripContent: { paddingHorizontal: 8, gap: 8 },
+  statPill: {
+    minWidth: 84, paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 14, alignItems: 'center',
+  },
+  statPillValue: { fontSize: 22, fontWeight: '800' },
+  statPillLabel: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+});
+
+const mobileStyles2 = StyleSheet.create({
+  dateNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginHorizontal: 8,
+  },
+  chevBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  dateText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  msgBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#111827',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  msgBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+});
+
+const ChildMobileRow = React.memo(({
+  item, isSelected, attendanceRecord, mealSelection,
+  onToggleSelection, onStatusUpdate, onViewChild, onShowOptions,
+}: any) => {
+  const hasMeal = mealSelection && !mealSelection.is_deleted && !mealSelection.is_skipped;
+  const mealName = hasMeal ? mealSelection?.menuline?.name || 'Menu' : null;
+  const hasAllergy = hasMeal && (mealSelection?.main_meal_allergy || mealSelection?.starter_allergy || mealSelection?.dessert_allergy);
+  const status = attendanceRecord?.status;
+  const onLeave = attendanceRecord?.is_leave;
+  const initials = `${(item.first_name || '')[0] || ''}${(item.family_name || '')[0] || ''}`.toUpperCase();
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => onToggleSelection(item.id)}
+      onLongPress={() => onViewChild(item.id)}
+      style={[mobileStyles.card, isSelected && mobileStyles.cardSelected]}
+    >
+      <View style={mobileStyles.avatar}>
+        <Text style={mobileStyles.avatarText}>{initials || '?'}</Text>
+      </View>
+      <View style={mobileStyles.body}>
+        <Text style={mobileStyles.name} numberOfLines={1}>
+          {item.first_name} {item.family_name}
+        </Text>
+        <View style={mobileStyles.metaRow}>
+          {item.children_info?.class ? (
+            <Text style={mobileStyles.metaText}>Klasse {item.children_info.class}</Text>
+          ) : null}
+        </View>
+        <View style={mobileStyles.badgeRow}>
+          {mealName ? (
+            <View style={[mobileStyles.pill, { backgroundColor: hasAllergy ? '#F1F5F9' : '#F1F5F9' }]}>
+              <Ionicons name="restaurant" size={11} color={hasAllergy ? '#111827' : '#64748B'} />
+              <Text style={[mobileStyles.pillText, { color: hasAllergy ? '#111827' : '#334155' }]} numberOfLines={1}>
+                {mealName}{hasAllergy ? ' !' : ''}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+      <View style={mobileStyles.actions}>
+        {onLeave ? (
+          <View style={[mobileStyles.statusBtn, { backgroundColor: '#F1F5F9' }]}>
+            <Text style={[mobileStyles.statusBtnText, { color: '#111827' }]}>Krank</Text>
+          </View>
+        ) : status && status !== 'Pending' ? (
+          <TouchableOpacity
+            onPress={(e) => { e.stopPropagation?.(); onShowOptions(item.id); }}
+            style={[mobileStyles.statusBtn, { backgroundColor: status === 'Present' ? '#F1F5F9' : '#F1F5F9' }]}
+          >
+            <Text style={[mobileStyles.statusBtnText, { color: status === 'Present' ? '#111827' : '#111827' }]}>
+              {status === 'Present' ? 'Da' : 'Fehlt'}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={status === 'Present' ? '#111827' : '#111827'} />
+          </TouchableOpacity>
+        ) : (
+          <View style={mobileStyles.quickStatus}>
+            <TouchableOpacity
+              onPress={(e) => { e.stopPropagation?.(); onStatusUpdate(item.id, 'Present'); }}
+              hitSlop={8}
+            >
+              <Ionicons name="checkmark-circle" size={30} color="#4CAF50" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={(e) => { e.stopPropagation?.(); onStatusUpdate(item.id, 'Absent'); }}
+              hitSlop={8}
+            >
+              <Ionicons name="close-circle" size={30} color="#F44336" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 const StatusOptionsModal = ({
   visible,
   onClose,
@@ -92,7 +312,7 @@ const StatusOptionsModal = ({
           <Text style={styles.modalItemText}>Früher gegangen</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.modalItem, styles.modalItemBorder]} onPress={() => onSelect('reset')}>
-          <Text style={[styles.modalItemText, { color: '#F44336' }]}>Zurücksetzen (Pending)</Text>
+          <Text style={[styles.modalItemText, { color: '#111827' }]}>Zurücksetzen (Pending)</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -148,6 +368,8 @@ export default function FacilityAttendanceScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isLandscape = width > 600;
+  const isMobile = useIsMobile();
+  const statsCardMinHeight = isMobile ? 92 : 140;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -563,10 +785,25 @@ export default function FacilityAttendanceScreen() {
     const hasAllergy = hasMeal && (meal?.main_meal_allergy || meal?.starter_allergy || meal?.dessert_allergy);
     const isSelected = selectedIds.has(item.id);
 
+    if (isMobile) {
+      return (
+        <ChildMobileRow
+          item={item}
+          isSelected={isSelected}
+          attendanceRecord={att}
+          mealSelection={meal}
+          onToggleSelection={toggleSelection}
+          onStatusUpdate={handleStatusUpdate}
+          onViewChild={handleViewChild}
+          onShowOptions={handleShowOptions}
+        />
+      );
+    }
+
     return (
       <View style={[styles.row, isSelected && styles.rowSelected]}>
         <TouchableOpacity onPress={() => toggleSelection(item.id)} style={styles.checkboxContainer}>
-          <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={24} color={isSelected ? '#007AFF' : '#ccc'} />
+          <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={24} color={isSelected ? '#111827' : '#ccc'} />
         </TouchableOpacity>
         <View style={styles.cellName}>
           <Text style={styles.nameText}>{item.family_name}, {item.first_name}</Text>
@@ -583,7 +820,7 @@ export default function FacilityAttendanceScreen() {
               <Text style={[styles.statusBtnText, att.status === 'Absent' && styles.statusBtnRed]}>
                 {att.status === 'Present' ? 'Anwesend' : 'Abwesend'}
               </Text>
-              <Ionicons name="chevron-down" size={12} color={att.status === 'Absent' ? '#D32F2F' : '#2E7D32'} />
+              <Ionicons name="chevron-down" size={12} color={att.status === 'Absent' ? '#111827' : '#111827'} />
             </TouchableOpacity>
           ) : (
             <View style={styles.statusActions}>
@@ -617,13 +854,15 @@ export default function FacilityAttendanceScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }]}>
-      <View style={styles.fixedHeader}>
-        <Text style={styles.title}>Ganztag</Text>
-        <View style={styles.facilityContextRow}>
-          <Text style={styles.facilityContextText}>Einrichtung: Anwesenheit</Text>
+    <View style={[styles.container, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD }, isMobile && { paddingTop: insets.top + 4 }]}>
+      {!isMobile && (
+        <View style={styles.fixedHeader}>
+          <Text style={styles.title}>Ganztag</Text>
+          <View style={styles.facilityContextRow}>
+            <Text style={styles.facilityContextText}>Einrichtung: Anwesenheit</Text>
+          </View>
         </View>
-      </View>
+      )}
 
       <FlatList
         data={loading ? [] : filteredChildren}
@@ -634,50 +873,66 @@ export default function FacilityAttendanceScreen() {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View>
-            <View style={styles.header}>
-              {/* Stats & Logs - same layout as supervisor */}
-              <View style={[styles.dashboardRow, isLandscape && styles.dashboardRowLandscape]}>
-                <View style={[styles.statsContainer, isLandscape && { flex: 1.1, marginRight: 16 }]}>
-                  <View style={styles.statsGrid}>
-                    <StatsCard title="Kinder mit Betreuung" value={stats.total} bgColor="#E3F2FD" color="#1565C0" style={{ width: '48%', minHeight: 140 }} />
-                    <StatsCard title="Kinder Heute (ohne Krank)" value={stats.active} bgColor="#E8F5E9" color="#2E7D32" style={{ width: '48%', minHeight: 140 }} />
-                    <StatsCard
-                      title="Kinder Krank Heute"
-                      value={stats.sick}
-                      bgColor="#FFEBEE"
-                      color="#C62828"
-                      showInfoIcon={stats.sick > 0}
-                      onInfoPress={() => Alert.alert('Kranke Kinder', filteredChildren.filter(isSickLeave).map((c) => `${c.first_name} ${c.family_name}`).join('\n'))}
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
-                    <StatsCard
-                      title="Bus Kinder Heute"
-                      value={stats.bus}
-                      bgColor="#FFF3E0"
-                      color="#EF6C00"
-                      showInfoIcon={stats.bus > 0}
-                      onInfoPress={() => Alert.alert('Bus Kinder', filteredChildren.filter(isBusChild).map((c) => `${c.first_name} ${c.family_name}`).join('\n'))}
-                      style={{ width: '48%', minHeight: 140 }}
-                    />
-                  </View>
-                </View>
-                <View style={[styles.logsContainer, isLandscape && { flex: 1 }]}>
-                  {currentAcademicYear && facilityId && (
-                    <AttendanceLogsPanel
-                      selectedAcademicYearId={currentAcademicYear}
-                      selectedFacilityId={facilityId}
-                      selectedDate={format(selectedDate, 'yyyy-MM-dd')}
-                      supervisorId={facilitySupervisorId}
-                      isCoordinator={false}
-                      accessibleFacilities={[facilityId]}
-                      useKindergartenSchedule={true}
-                    />
-                  )}
+            {isMobile && (
+              <View style={{ paddingTop: 8, paddingBottom: 4, paddingHorizontal: 14 }}>
+                <Text style={[styles.title, { fontSize: 18, marginBottom: 0 }]}>Ganztag</Text>
+                <View style={styles.facilityContextRow}>
+                  <Text style={[styles.facilityContextText, { fontSize: 12 }]}>Einrichtung: Anwesenheit</Text>
                 </View>
               </View>
+            )}
+            <View style={styles.header}>
+              {/* Stats & Logs - same layout as supervisor */}
+              {isMobile ? (
+                <MobileStatsStrip
+                  stats={stats}
+                  onInfoPressSick={() => Alert.alert('Kranke Kinder', filteredChildren.filter(isSickLeave).map((c) => `${c.first_name} ${c.family_name}`).join('\n') || 'Keine')}
+                  onInfoPressBus={() => Alert.alert('Bus Kinder', filteredChildren.filter(isBusChild).map((c) => `${c.first_name} ${c.family_name}`).join('\n') || 'Keine')}
+                />
+              ) : (
+                <View style={[styles.dashboardRow, isLandscape && styles.dashboardRowLandscape]}>
+                  <View style={[styles.statsContainer, isLandscape && { flex: 1.1, marginRight: 16 }]}>
+                    <View style={styles.statsGrid}>
+                      <StatsCard title="Kinder mit Betreuung" value={stats.total} bgColor="#E3F2FD" color="#1565C0" style={{ width: '48%', minHeight: statsCardMinHeight }} />
+                      <StatsCard title="Kinder Heute (ohne Krank)" value={stats.active} bgColor="#E8F5E9" color="#2E7D32" style={{ width: '48%', minHeight: statsCardMinHeight }} />
+                      <StatsCard
+                        title="Kinder Krank Heute"
+                        value={stats.sick}
+                        bgColor="#FFEBEE"
+                        color="#C62828"
+                        showInfoIcon={stats.sick > 0}
+                        onInfoPress={() => Alert.alert('Kranke Kinder', filteredChildren.filter(isSickLeave).map((c) => `${c.first_name} ${c.family_name}`).join('\n'))}
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                      <StatsCard
+                        title="Bus Kinder Heute"
+                        value={stats.bus}
+                        bgColor="#FFF3E0"
+                        color="#EF6C00"
+                        showInfoIcon={stats.bus > 0}
+                        onInfoPress={() => Alert.alert('Bus Kinder', filteredChildren.filter(isBusChild).map((c) => `${c.first_name} ${c.family_name}`).join('\n'))}
+                        style={{ width: '48%', minHeight: statsCardMinHeight }}
+                      />
+                    </View>
+                  </View>
+                  <View style={[styles.logsContainer, isLandscape && { flex: 1 }]}>
+                    {currentAcademicYear && facilityId && (
+                      <AttendanceLogsPanel
+                        selectedAcademicYearId={currentAcademicYear}
+                        selectedFacilityId={facilityId}
+                        selectedDate={format(selectedDate, 'yyyy-MM-dd')}
+                        supervisorId={facilitySupervisorId}
+                        isCoordinator={false}
+                        accessibleFacilities={[facilityId]}
+                        useKindergartenSchedule={true}
+                      />
+                    )}
+                  </View>
+                </View>
+              )}
 
               {currentAcademicYear && facilityId ? (
-                <View style={styles.calendarCard}>
+                <View style={[styles.calendarCard, isMobile && { marginHorizontal: 4 }]}>
                   <AttendanceEmbeddedWeekCalendar
                     facilityId={facilityId}
                     academicYearId={currentAcademicYear}
@@ -688,32 +943,85 @@ export default function FacilityAttendanceScreen() {
                 </View>
               ) : null}
 
+              {isMobile && currentAcademicYear && facilityId ? (
+                <View style={{ marginHorizontal: 8, marginTop: 8 }}>
+                  <AttendanceLogsPanel
+                    selectedAcademicYearId={currentAcademicYear}
+                    selectedFacilityId={facilityId}
+                    selectedDate={format(selectedDate, 'yyyy-MM-dd')}
+                    supervisorId={facilitySupervisorId}
+                    isCoordinator={false}
+                    accessibleFacilities={[facilityId]}
+                    useKindergartenSchedule={true}
+                  />
+                </View>
+              ) : null}
+
               {/* Navigation: Anwesenheit title + Message button + Date */}
               <View style={styles.navigationSection}>
-                <View style={styles.titleRow}>
-                  <Text style={styles.sectionTitle}>Anwesenheit</Text>
-                  <TouchableOpacity
-                    style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
-                    disabled={selectedIds.size === 0}
-                    onPress={() => setSendMessageOpen(true)}
-                  >
-                    <Ionicons name="mail-outline" size={18} color="#fff" />
-                    <Text style={styles.messageButtonText}>Nachricht senden</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.dateControls}>
-                  <TouchableOpacity onPress={() => setSelectedDate(subDays(selectedDate, 1))} style={styles.navButton}>
-                    <Ionicons name="chevron-back" size={20} color="#333" />
-                    <Text style={styles.navButtonText}>Vorheriger Tag</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.dateDisplay}>
-                    {format(selectedDate, 'EEEE, d. MMM yyyy', { locale: de })}
-                  </Text>
-                  <TouchableOpacity onPress={() => setSelectedDate(addDays(selectedDate, 1))} style={styles.navButton}>
-                    <Text style={styles.navButtonText}>Nächster Tag</Text>
-                    <Ionicons name="chevron-forward" size={20} color="#333" />
-                  </TouchableOpacity>
-                </View>
+                {isMobile ? (
+                  <>
+                    <View style={mobileStyles2.dateNavRow}>
+                      <TouchableOpacity
+                        onPress={() => setSelectedDate(subDays(selectedDate, 1))}
+                        style={mobileStyles2.chevBtn}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="chevron-back" size={22} color="#0F172A" />
+                      </TouchableOpacity>
+                      <Text style={mobileStyles2.dateText} numberOfLines={1}>
+                        {format(selectedDate, 'EEE, d. MMM yyyy', { locale: de })}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setSelectedDate(addDays(selectedDate, 1))}
+                        style={mobileStyles2.chevBtn}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="chevron-forward" size={22} color="#0F172A" />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={mobileStyles2.sectionTitleRow}>
+                      <Text style={mobileStyles2.sectionTitle}>
+                        Anwesenheit {selectedIds.size > 0 ? `· ${selectedIds.size}` : ''}
+                      </Text>
+                      <TouchableOpacity
+                        style={[mobileStyles2.msgBtn, selectedIds.size === 0 && { opacity: 0.4 }]}
+                        disabled={selectedIds.size === 0}
+                        onPress={() => setSendMessageOpen(true)}
+                      >
+                        <Ionicons name="mail-outline" size={16} color="#fff" />
+                        <Text style={mobileStyles2.msgBtnText}>Senden</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.titleRow}>
+                      <Text style={styles.sectionTitle}>Anwesenheit</Text>
+                      <TouchableOpacity
+                        style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
+                        disabled={selectedIds.size === 0}
+                        onPress={() => setSendMessageOpen(true)}
+                      >
+                        <Ionicons name="mail-outline" size={18} color="#fff" />
+                        <Text style={styles.messageButtonText}>Nachricht senden</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.dateControls}>
+                      <TouchableOpacity onPress={() => setSelectedDate(subDays(selectedDate, 1))} style={styles.navButton}>
+                        <Ionicons name="chevron-back" size={20} color="#333" />
+                        <Text style={styles.navButtonText}>Vorheriger Tag</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.dateDisplay}>
+                        {format(selectedDate, 'EEEE, d. MMM yyyy', { locale: de })}
+                      </Text>
+                      <TouchableOpacity onPress={() => setSelectedDate(addDays(selectedDate, 1))} style={styles.navButton}>
+                        <Text style={styles.navButtonText}>Nächster Tag</Text>
+                        <Ionicons name="chevron-forward" size={20} color="#333" />
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
               </View>
 
               {classOptions.length > 1 && (
@@ -724,12 +1032,12 @@ export default function FacilityAttendanceScreen() {
               )}
 
               {/* Table header */}
-              <View style={styles.tableHeader}>
-                <View style={{ width: 40 }} />
+              <View style={[styles.tableHeader, isMobile && { paddingHorizontal: 14 }]}>
+                {!isMobile && <View style={{ width: 40 }} />}
                 <Text style={[styles.th, styles.cellName]}>Name</Text>
                 <Text style={[styles.th, styles.cellLunch]}>Essen</Text>
                 <Text style={[styles.th, styles.cellStatus]}>Status</Text>
-                <Text style={[styles.th, styles.cellAction]}>Aktion</Text>
+                {!isMobile && <Text style={[styles.th, styles.cellAction]}>Aktion</Text>}
               </View>
             </View>
           </View>
@@ -777,12 +1085,12 @@ export default function FacilityAttendanceScreen() {
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   container: { flex: 1, backgroundColor: '#FFFFFF' },
-  errorText: { fontSize: 16, color: '#c62828' },
+  errorText: { fontSize: 16, color: '#111827' },
   fixedHeader: { paddingHorizontal: 16, paddingTop: 0, paddingBottom: 8, backgroundColor: '#FFFFFF', zIndex: 10 },
   title: { fontSize: 20, fontWeight: '700', marginBottom: 4, color: '#111827' },
   facilityContextRow: { marginBottom: 16 },
   facilityContextText: { fontSize: 16, color: '#666' },
-  header: { paddingHorizontal: 16, paddingBottom: 16, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E5EA' },
+  header: { paddingHorizontal: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
   dashboardRow: { flexDirection: 'column', gap: 16, marginBottom: 24 },
   dashboardRowLandscape: { flexDirection: 'row', minHeight: 400 },
   statsContainer: {},
@@ -826,14 +1134,14 @@ const styles = StyleSheet.create({
   nameText: { fontSize: 14, fontWeight: '500' },
   subText: { fontSize: 12, color: '#666', marginTop: 2 },
   cellText: { fontSize: 13 },
-  allergyText: { color: '#D32F2F', fontWeight: 'bold' },
-  leaveText: { color: '#C62828', fontSize: 12 },
+  allergyText: { color: '#111827', fontWeight: 'bold' },
+  leaveText: { color: '#111827', fontSize: 12 },
   statusBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', gap: 4 },
-  statusBtnText: { fontSize: 12, color: '#2E7D32' },
-  statusBtnRed: { color: '#D32F2F' },
+  statusBtnText: { fontSize: 12, color: '#111827' },
+  statusBtnRed: { color: '#111827' },
   statusActions: { flexDirection: 'row', gap: 8 },
   linkBtn: { paddingVertical: 4 },
-  linkBtnText: { fontSize: 12, color: '#0a7ea4' },
+  linkBtnText: { fontSize: 12, color: '#111827' },
   listContent: { paddingBottom: 40 },
   emptyText: { textAlign: 'center', padding: 24, color: '#666', fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },

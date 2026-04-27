@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import type { SingleFacilityScope, SupervisorFacilityScope } from '@/lib/staffFacilityScope';
 import NotificationComposeModal from '@/components/NotificationComposeModal';
 import { SCREEN_HEADER_TOP_PAD } from '@/constants/theme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 type Scope = SingleFacilityScope | SupervisorFacilityScope;
 
@@ -97,6 +98,7 @@ export default function StaffNotificationsScreen({
   scopeLoader: () => Promise<Scope | null>;
 }) {
   const insets = useSafeAreaInsets();
+  const isMobile = useIsMobile();
 
   const [scope, setScope] = useState<Scope | null>(null);
   const [rows, setRows] = useState<MsgRow[]>([]);
@@ -469,7 +471,7 @@ export default function StaffNotificationsScreen({
 
   const facilityIdForCompose = scope ? primaryFacilityIdFromScope(scope) : '';
 
-  const tableHeader = (
+  const tableHeader = isMobile ? null : (
     <View style={styles.tableHeaderRow}>
       <Text style={[styles.th, styles.thTitle]}>Titel</Text>
       <Text style={[styles.th, styles.thDate]}>Datum</Text>
@@ -479,19 +481,61 @@ export default function StaffNotificationsScreen({
     </View>
   );
 
+  const notifStatusStyle = (s: string) => {
+    const v = String(s).toLowerCase();
+    if (v === 'sent') return { bg: '#111827', fg: '#FFFFFF' };
+    if (v === 'scheduled') return { bg: '#E5E7EB', fg: '#111827' };
+    if (v === 'draft') return { bg: '#F3F4F6', fg: '#6B7280' };
+    if (v === 'failed' || v === 'canceled') return { bg: '#FFEBEE', fg: '#C62828' };
+    return { bg: '#E5E7EB', fg: '#374151' };
+  };
+
   const messagesList = (
     <FlatList
       data={filtered}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       style={styles.tableList}
-      contentContainerStyle={filtered.length === 0 ? styles.tableListContentEmpty : styles.tableListContent}
+      contentContainerStyle={
+        filtered.length === 0
+          ? styles.tableListContentEmpty
+          : [styles.tableListContent, isMobile && { paddingHorizontal: 0, gap: 4 }]
+      }
       keyboardShouldPersistTaps="handled"
       ListEmptyComponent={
-        <Text style={styles.empty}>{loading ? '' : 'No messages found.'}</Text>
+        <Text style={styles.empty}>{loading ? '' : 'Keine Nachrichten gefunden.'}</Text>
       }
       renderItem={({ item }) => {
         const sel = selected?.id === item.id;
+        if (isMobile) {
+          const ss = notifStatusStyle(String(item.status || ''));
+          const dist = firstAudience(item);
+          const rec = formatRecipients(item);
+          return (
+            <TouchableOpacity
+              style={[notifMobile.card, sel && notifMobile.cardSel]}
+              onPress={() => openDetail(item)}
+              onLongPress={() => setConfirmDeleteId(item.id)}
+              activeOpacity={0.7}
+            >
+              <View style={notifMobile.cardHeader}>
+                <Text style={notifMobile.cardTitle} numberOfLines={2}>
+                  {item.title}
+                </Text>
+                <View style={[notifMobile.statusPill, { backgroundColor: ss.bg }]}>
+                  <Text style={[notifMobile.statusPillText, { color: ss.fg }]} numberOfLines={1}>
+                    {statusLabelDe(item.status)}
+                  </Text>
+                </View>
+              </View>
+              <Text style={notifMobile.cardMeta} numberOfLines={1}>
+                {formatRowDate(item)}
+                {dist ? ` · ${dist}` : ''}
+                {rec ? ` · ${rec}` : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        }
         return (
           <TouchableOpacity
             style={[styles.tableDataRow, sel && styles.tableDataRowSel]}
@@ -522,7 +566,7 @@ export default function StaffNotificationsScreen({
 
   /** One bordered card: grey header row + scrollable body (matches web — no separate header “card”). */
   const tableBlock = (
-    <View style={styles.tableShell}>
+    <View style={[styles.tableShell, isMobile && { backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0 }]}>
       {tableHeader}
       {messagesList}
     </View>
@@ -535,59 +579,98 @@ export default function StaffNotificationsScreen({
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + SCREEN_HEADER_TOP_PAD, paddingBottom: insets.bottom + 8 }]}>
-      <View style={styles.headerRow}>
-        <View style={styles.titleBlock}>
-          <Text style={styles.h1}>Elternbenachrichtigung</Text>
-          <Text style={styles.sub}>Nachrichten an Eltern erstellen, planen und verwalten</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <View style={styles.yearGroup}>
-            <Text style={styles.yearLabel}>Akademisches Jahr</Text>
-            <TouchableOpacity style={styles.yearChip} onPress={() => setYearPickerOpen(true)}>
+      {isMobile ? (
+        <>
+          <View style={notifMobile.titleBlock}>
+            <Text style={styles.h1}>Elternbenachrichtigung</Text>
+            <Text style={styles.sub} numberOfLines={2}>
+              Nachrichten an Eltern erstellen, planen und verwalten
+            </Text>
+          </View>
+          <View style={notifMobile.actionRow}>
+            <TouchableOpacity style={[styles.yearChip, notifMobile.yearChipMobile]} onPress={() => setYearPickerOpen(true)}>
               <Text style={styles.yearChipText} numberOfLines={1}>
                 {selectedYearLabel}
               </Text>
               <Ionicons name="chevron-down" size={16} color="#374151" />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={notifMobile.createBtnMobile}
+              onPress={() => {
+                if (!staffUserId) {
+                  Alert.alert('Hinweis', 'Benutzer konnte nicht geladen werden.');
+                  return;
+                }
+                if (selectedAcademicYearId == null) {
+                  Alert.alert(
+                    'Schuljahr',
+                    'Bitte wählen Sie ein konkretes Schuljahr aus (nicht „Alle Jahre“), um eine Nachricht zu erstellen.'
+                  );
+                  return;
+                }
+                setComposeOpen(true);
+              }}
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+              <Text style={styles.createBtnText}>Erstellen</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={styles.createBtn}
-            onPress={() => {
-              if (!staffUserId) {
-                Alert.alert('Hinweis', 'Benutzer konnte nicht geladen werden.');
-                return;
-              }
-              if (selectedAcademicYearId == null) {
-                Alert.alert(
-                  'Schuljahr',
-                  'Bitte wählen Sie ein konkretes Schuljahr aus (nicht „Alle Jahre“), um eine Nachricht zu erstellen.'
-                );
-                return;
-              }
-              setComposeOpen(true);
-            }}
-          >
-            <Ionicons name="add" size={18} color="#fff" />
-            <Text style={styles.createBtnText}>Nachricht erstellen</Text>
-          </TouchableOpacity>
+        </>
+      ) : (
+        <View style={styles.headerRow}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.h1}>Elternbenachrichtigung</Text>
+            <Text style={styles.sub}>Nachrichten an Eltern erstellen, planen und verwalten</Text>
+          </View>
+          <View style={styles.headerRight}>
+            <View style={styles.yearGroup}>
+              <Text style={styles.yearLabel}>Akademisches Jahr</Text>
+              <TouchableOpacity style={styles.yearChip} onPress={() => setYearPickerOpen(true)}>
+                <Text style={styles.yearChipText} numberOfLines={1}>
+                  {selectedYearLabel}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={() => {
+                if (!staffUserId) {
+                  Alert.alert('Hinweis', 'Benutzer konnte nicht geladen werden.');
+                  return;
+                }
+                if (selectedAcademicYearId == null) {
+                  Alert.alert(
+                    'Schuljahr',
+                    'Bitte wählen Sie ein konkretes Schuljahr aus (nicht „Alle Jahre“), um eine Nachricht zu erstellen.'
+                  );
+                  return;
+                }
+                setComposeOpen(true);
+              }}
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+              <Text style={styles.createBtnText}>Nachricht erstellen</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
 
-      <View style={styles.statRow}>
-        <View style={styles.statCard}>
+      <View style={[styles.statRow, isMobile && notifMobile.statGrid]}>
+        <View style={[styles.statCard, isMobile && notifMobile.statCardMobile]}>
           <Text style={styles.statLbl}>Gesendet</Text>
           <Text style={styles.statVal}>{stats.sentTotal16w}</Text>
         </View>
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, isMobile && notifMobile.statCardMobile]}>
           <Text style={styles.statLbl}>Geplant</Text>
           <Text style={styles.statVal}>{stats.scheduledTotal16w}</Text>
         </View>
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, isMobile && notifMobile.statCardMobile]}>
           <Text style={styles.statLbl}>Entwürfe</Text>
           <Text style={styles.statVal}>{stats.draftsTotal16w}</Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLbl}>Ø Öffnungsrate</Text>
+        <View style={[styles.statCard, isMobile && notifMobile.statCardMobile]}>
+          <Text style={styles.statLbl}>{isMobile ? 'Öffnungsrate' : 'Ø Öffnungsrate'}</Text>
           <Text style={styles.statVal}>{Math.round(stats.avgDeliveryRate * 100)}%</Text>
         </View>
       </View>
@@ -651,7 +734,7 @@ export default function StaffNotificationsScreen({
                   }}
                 >
                   <Text style={styles.filterSheetRowText}>{label}</Text>
-                  {status === val ? <Ionicons name="checkmark" size={22} color="#0a7ea4" /> : null}
+                  {status === val ? <Ionicons name="checkmark" size={22} color="#111827" /> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -672,7 +755,7 @@ export default function StaffNotificationsScreen({
                 }}
               >
                 <Text style={styles.pickRowText}>Alle Jahre</Text>
-                {selectedAcademicYearId == null ? <Ionicons name="checkmark" size={20} color="#0a7ea4" /> : null}
+                {selectedAcademicYearId == null ? <Ionicons name="checkmark" size={20} color="#111827" /> : null}
               </TouchableOpacity>
               {academicYearOptions.map((y) => (
                 <TouchableOpacity
@@ -684,7 +767,7 @@ export default function StaffNotificationsScreen({
                   }}
                 >
                   <Text style={styles.pickRowText}>{y.year}</Text>
-                  {y.id === selectedAcademicYearId ? <Ionicons name="checkmark" size={20} color="#0a7ea4" /> : null}
+                  {y.id === selectedAcademicYearId ? <Ionicons name="checkmark" size={20} color="#111827" /> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -892,14 +975,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#f3f4f6',
   },
-  tableDataRowSel: { backgroundColor: '#f0f9ff' },
+  tableDataRowSel: { backgroundColor: '#F8FAFC' },
   td: { fontSize: 13, color: '#374151' },
   tdTitle: { flex: 2, minWidth: 0, fontWeight: '600', color: '#111827', paddingRight: 6 },
   tdDate: { flex: 1, minWidth: 0 },
   tdDist: { flex: 1, minWidth: 0 },
   tdRec: { flex: 1, minWidth: 0 },
   tdStat: { flex: 1, minWidth: 0 },
-  err: { color: '#b91c1c', marginBottom: 8 },
+  err: { color: '#111827', marginBottom: 8 },
   detailScroll: { flex: 1 },
   empty: { color: '#9ca3af', textAlign: 'center', fontSize: 14 },
   card: {
@@ -910,17 +993,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  cardSel: { borderColor: '#0a7ea4', backgroundColor: '#f0f9ff' },
+  cardSel: { borderColor: '#111827', backgroundColor: '#F8FAFC' },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   cardTitle: { fontSize: 16, fontWeight: '600', color: '#111827', flex: 1 },
-  facLine: { fontSize: 13, color: '#0a7ea4', marginTop: 4 },
+  facLine: { fontSize: 13, color: '#111827', marginTop: 4 },
   tableRow: { flexDirection: 'row', marginTop: 6, gap: 8 },
   colLbl: { width: 88, fontSize: 12, color: '#9ca3af', fontWeight: '600' },
   colVal: { flex: 1, fontSize: 13, color: '#374151' },
   muted: { fontSize: 14, color: '#9ca3af' },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  pill: { backgroundColor: '#e0f2fe', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  pillText: { fontSize: 12, color: '#0369a1', fontWeight: '600' },
+  pill: { backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  pillText: { fontSize: 12, color: '#111827', fontWeight: '600' },
   pillMuted: { backgroundColor: '#f3f4f6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   pillTextMuted: { fontSize: 12, color: '#4b5563' },
   pillMini: { backgroundColor: '#eef2ff', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
@@ -969,8 +1052,91 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
   },
   btnOutlineText: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  btnDanger: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: '#b91c1c' },
+  btnDanger: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: '#111827' },
   btnDangerText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   closeBtn: { marginTop: 16, alignSelf: 'center', padding: 12 },
-  closeBtnText: { color: '#0a7ea4', fontWeight: '700', fontSize: 16 },
+  closeBtnText: { color: '#111827', fontWeight: '700', fontSize: 16 },
+});
+
+const notifMobile = StyleSheet.create({
+  titleBlock: {
+    marginBottom: 10,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+  yearChipMobile: {
+    flex: 1,
+    minWidth: 0,
+  },
+  createBtnMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#111827',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statCardMobile: {
+    width: '48%',
+    flexBasis: '48%',
+    minWidth: 0,
+    minHeight: 78,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 0,
+    marginVertical: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  cardSel: {
+    borderColor: '#111827',
+    backgroundColor: '#F8FAFC',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 4,
+  },
+  cardTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 20,
+  },
+  cardMeta: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  statusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    maxWidth: 110,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
 });

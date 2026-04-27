@@ -7,12 +7,13 @@ import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { getFacilitySettingsForYear } from '@/lib/facility-settings-resolver';
 
 // Dashboard Card Component
-const DashboardCard = ({ title, value, icon, color, bgColor, onPress }: any) => (
-  <TouchableOpacity 
-    style={[styles.card, { backgroundColor: bgColor || '#fff' }]} 
+const DashboardCard = ({ title, value, icon, color, bgColor, onPress, isMobile }: any) => (
+  <TouchableOpacity
+    style={[styles.card, isMobile && styles.cardMobile, { backgroundColor: bgColor || '#fff' }]}
     onPress={onPress}
     activeOpacity={onPress ? 0.7 : 1}
   >
@@ -31,6 +32,7 @@ export default function SupervisorDashboardScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isLandscape = width > 768;
+  const isMobile = useIsMobile();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -197,51 +199,55 @@ export default function SupervisorDashboardScreen() {
           </View>
         ) : (
           <View style={styles.grid}>
-            <DashboardCard 
-              title="Kinder" 
-              value={stats.children} 
-              icon="people" 
-              color="#3B82F6" // blue-500
-              bgColor="#EFF6FF" // blue-50
+            <DashboardCard
+              title="Kinder"
+              value={stats.children}
+              icon="people"
+              color="#111827"
+              bgColor="#F1F5F9"
+              isMobile={isMobile}
               onPress={() => router.push('/supervisor/attendance')}
             />
-            <DashboardCard 
-              title="Einrichtungen" 
-              value={stats.facilities} 
-              icon="business" 
-              color="#22C55E" // green-500
-              bgColor="#F0FDF4" // green-50
-              // onPress={() => router.push('/supervisor/facilities')} // No route yet
+            <DashboardCard
+              title="Einrichtungen"
+              value={stats.facilities}
+              icon="business"
+              color="#111827"
+              bgColor="#F1F5F9"
+              isMobile={isMobile}
             />
-             <DashboardCard 
-              title="Neue Tickets" 
-              value={stats.tickets} 
-              icon="ticket" 
-              color="#F59E0B" // amber-500
-              bgColor="#FFFBEB" // amber-50
-              // onPress={() => router.push('/supervisor/tickets')} // No route yet
+            <DashboardCard
+              title="Neue Tickets"
+              value={stats.tickets}
+              icon="ticket"
+              color="#111827"
+              bgColor="#F8FAFC"
+              isMobile={isMobile}
             />
-            <DashboardCard 
-              title="Gruppen" 
-              value={stats.groups} 
-              icon="school" 
-              color="#10B981" // emerald-500
-              bgColor="#ECFDF5" // emerald-50
+            <DashboardCard
+              title="Gruppen"
+              value={stats.groups}
+              icon="school"
+              color="#111827"
+              bgColor="#F1F5F9"
+              isMobile={isMobile}
               onPress={() => router.push('/supervisor/grouping')}
             />
-            <DashboardCard 
-              title="Caterer" 
-              value={stats.caterers} 
-              icon="restaurant" 
-              color="#06B6D4" // cyan-500
-              bgColor="#ECFEFF" // cyan-50
+            <DashboardCard
+              title="Caterer"
+              value={stats.caterers}
+              icon="restaurant"
+              color="#111827"
+              bgColor="#F1F5F9"
+              isMobile={isMobile}
             />
-            <DashboardCard 
-              title="Benutzer" 
-              value={stats.users} 
-              icon="person" 
-              color="#14B8A6" // teal-500
-              bgColor="#F0FDFA" // teal-50
+            <DashboardCard
+              title="Benutzer"
+              value={stats.users}
+              icon="person"
+              color="#111827"
+              bgColor="#F1F5F9"
+              isMobile={isMobile}
             />
           </View>
         )}
@@ -295,6 +301,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
+  },
+  cardMobile: {
+    width: '100%',
+    minHeight: 96,
+    padding: 14,
   },
   iconContainer: {
     width: 40,

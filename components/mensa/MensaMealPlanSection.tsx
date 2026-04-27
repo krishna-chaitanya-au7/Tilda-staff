@@ -10,6 +10,7 @@ import {
   FlatList,
   Pressable,
   TextInput,
+  ScrollView,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { addWeeks, subWeeks } from 'date-fns';
@@ -29,6 +30,7 @@ import {
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { printOrShareSpeiseplan } from '@/components/mensa/mensaPdf';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 type Props = {
   facilityId: string;
@@ -44,6 +46,7 @@ const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
 ];
 
 export function MensaMealPlanSection({ facilityId, selectedHeaderYearId, onDayInfo }: Props) {
+  const isMobile = useIsMobile();
   const [filterType, setFilterType] = useState<FilterType>('current_week');
   const [selectedMenulineId, setSelectedMenulineId] = useState('all');
   const [currentWeek, setCurrentWeek] = useState(() => new Date());
@@ -195,36 +198,66 @@ export function MensaMealPlanSection({ facilityId, selectedHeaderYearId, onDayIn
 
   return (
     <View style={styles.section}>
-      <View style={styles.titleRow}>
-        <Text style={styles.h2Centered} numberOfLines={1}>
-          Speiseplan
-        </Text>
-        <View style={styles.filtersRight}>
-          <TouchableOpacity style={styles.selectBtn} onPress={() => setMenulinePickerOpen(true)}>
-            <Text style={styles.selectBtnText} numberOfLines={1}>
-              {menulineLabel}
-            </Text>
-            <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
+      {isMobile ? (
+        <>
+          <Text style={styles.mobileTitle}>Speiseplan</Text>
+          <View style={styles.mobileFiltersRow}>
+            <TouchableOpacity style={styles.mobileSelectBtn} onPress={() => setMenulinePickerOpen(true)}>
+              <Text style={styles.selectBtnText} numberOfLines={1}>
+                {menulineLabel}
+              </Text>
+              <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.mobileSelectBtn} onPress={() => setFilterPickerOpen(true)}>
+              <Text style={styles.selectBtnText} numberOfLines={1}>
+                {FILTER_OPTIONS.find((f) => f.value === filterType)?.label}
+              </Text>
+              <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={[styles.pdfBtnMobile, (!dayMenulines.length || pdfBusy) && styles.pdfBtnDisabled]}
+            onPress={onExportPdf}
+            disabled={!dayMenulines.length || pdfBusy}
+          >
+            <MaterialIcons name="file-download" size={18} color="#fff" />
+            <Text style={styles.pdfBtnText}>{pdfBusy ? '…' : 'PDF exportieren'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.selectBtn} onPress={() => setFilterPickerOpen(true)}>
-            <Text style={styles.selectBtnText} numberOfLines={1}>
-              {FILTER_OPTIONS.find((f) => f.value === filterType)?.label}
+        </>
+      ) : (
+        <>
+          <View style={styles.titleRow}>
+            <Text style={styles.h2Centered} numberOfLines={1}>
+              Speiseplan
             </Text>
-            <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
-          </TouchableOpacity>
-        </View>
-      </View>
+            <View style={styles.filtersRight}>
+              <TouchableOpacity style={styles.selectBtn} onPress={() => setMenulinePickerOpen(true)}>
+                <Text style={styles.selectBtnText} numberOfLines={1}>
+                  {menulineLabel}
+                </Text>
+                <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.selectBtn} onPress={() => setFilterPickerOpen(true)}>
+                <Text style={styles.selectBtnText} numberOfLines={1}>
+                  {FILTER_OPTIONS.find((f) => f.value === filterType)?.label}
+                </Text>
+                <MaterialIcons name="arrow-drop-down" size={22} color="#374151" />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-      <View style={styles.pdfRow}>
-        <TouchableOpacity
-          style={[styles.pdfBtn, (!dayMenulines.length || pdfBusy) && styles.pdfBtnDisabled]}
-          onPress={onExportPdf}
-          disabled={!dayMenulines.length || pdfBusy}
-        >
-          <MaterialIcons name="file-download" size={18} color="#fff" />
-          <Text style={styles.pdfBtnText}>{pdfBusy ? '…' : 'Als PDF exportieren'}</Text>
-        </TouchableOpacity>
-      </View>
+          <View style={styles.pdfRow}>
+            <TouchableOpacity
+              style={[styles.pdfBtn, (!dayMenulines.length || pdfBusy) && styles.pdfBtnDisabled]}
+              onPress={onExportPdf}
+              disabled={!dayMenulines.length || pdfBusy}
+            >
+              <MaterialIcons name="file-download" size={18} color="#fff" />
+              <Text style={styles.pdfBtnText}>{pdfBusy ? '…' : 'Als PDF exportieren'}</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
       {filterType === 'current_month' && (
         <View style={styles.monthNav}>
@@ -276,55 +309,118 @@ export function MensaMealPlanSection({ facilityId, selectedHeaderYearId, onDayIn
         </TouchableOpacity>
       )}
 
-      <View style={styles.tableScroll}>
-        <View style={styles.table}>
-          <View style={styles.tr}>
-            <View style={[styles.th, styles.thCorner]} />
-            {weekDays.map((day, idx) => (
-              <View key={toYmd(day)} style={styles.th}>
-                <View style={styles.thInner}>
-                  <Text style={styles.thText}>{['Mo', 'Di', 'Mi', 'Do', 'Fr'][idx]}</Text>
-                  <TouchableOpacity onPress={() => onDayInfo(day)} hitSlop={8}>
-                    <MaterialIcons name="info-outline" size={16} color="#6b7280" />
-                  </TouchableOpacity>
+      {isMobile ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator
+          style={styles.tableScroll}
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          <View style={[styles.table, { minWidth: 80 + 5 * 120 }]}>
+            <View style={styles.tr}>
+              <View style={[styles.th, styles.thCorner, styles.cornerMobile]} />
+              {weekDays.map((day, idx) => (
+                <View key={toYmd(day)} style={[styles.th, styles.dayColMobile]}>
+                  <View style={styles.thInner}>
+                    <Text style={styles.thText}>{['Mo', 'Di', 'Mi', 'Do', 'Fr'][idx]}</Text>
+                    <TouchableOpacity onPress={() => onDayInfo(day)} hitSlop={8}>
+                      <MaterialIcons name="info-outline" size={14} color="#6b7280" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
-            ))}
-          </View>
-          {maxMenus === 0 ? (
-            <View style={styles.emptyRow}>
-              <Text style={styles.emptyText}>Kein Speiseplan im gewählten Zeitraum gefunden</Text>
+              ))}
             </View>
-          ) : (
-            tableRows.rows.map((row) => (
-              <View key={row.key} style={styles.tr}>
-                <View style={styles.tdLabel}>
-                  <Text style={styles.tdLabelText}>{row.label}</Text>
+            {maxMenus === 0 ? (
+              <View style={styles.tr}>
+                <View style={[styles.tdLabel, styles.cornerMobile]} />
+                <View style={[styles.td, { flexGrow: 1, borderLeftWidth: 1, borderColor: '#eaecef' }]}>
+                  <Text style={styles.emptyText}>Kein Speiseplan im gewählten Zeitraum gefunden</Text>
                 </View>
-                {weekDays.map((day) => {
-                  const dayData = tableRows.dayMap.get(toYmd(day));
-                  const menus = dayData?.menulines || [];
-                  let value = '—';
-                  if (row.key === 'starter') value = menus[0]?.starter?.title || '—';
-                  else if (row.key === 'dessert') value = menus[0]?.dessert?.title || '—';
-                  else {
-                    const index = Number(row.key.replace('menu-', '')) - 1;
-                    value = menus[index]?.mainCourse?.title || '—';
-                  }
-                  const secondary = row.key === 'starter' || row.key === 'dessert';
-                  return (
-                    <View key={`${row.key}-${toYmd(day)}`} style={styles.td}>
-                      <Text style={[styles.tdText, secondary && styles.tdSecondary]} numberOfLines={8}>
-                        {value}
-                      </Text>
-                    </View>
-                  );
-                })}
               </View>
-            ))
-          )}
+            ) : (
+              tableRows.rows.map((row) => (
+                <View key={row.key} style={styles.tr}>
+                  <View style={[styles.tdLabel, styles.cornerMobile]}>
+                    <Text style={styles.tdLabelText}>{row.label}</Text>
+                  </View>
+                  {weekDays.map((day) => {
+                    const dayData = tableRows.dayMap.get(toYmd(day));
+                    const menus = dayData?.menulines || [];
+                    let value = '—';
+                    if (row.key === 'starter') value = menus[0]?.starter?.title || '—';
+                    else if (row.key === 'dessert') value = menus[0]?.dessert?.title || '—';
+                    else {
+                      const index = Number(row.key.replace('menu-', '')) - 1;
+                      value = menus[index]?.mainCourse?.title || '—';
+                    }
+                    const secondary = row.key === 'starter' || row.key === 'dessert';
+                    return (
+                      <View key={`${row.key}-${toYmd(day)}`} style={[styles.td, styles.dayColMobile]}>
+                        <Text style={[styles.tdText, secondary && styles.tdSecondary, { fontSize: 12 }]} numberOfLines={8}>
+                          {value}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      ) : (
+        <View style={styles.tableScroll}>
+          <View style={styles.table}>
+            <View style={styles.tr}>
+              <View style={[styles.th, styles.thCorner]} />
+              {weekDays.map((day, idx) => (
+                <View key={toYmd(day)} style={styles.th}>
+                  <View style={styles.thInner}>
+                    <Text style={styles.thText}>{['Mo', 'Di', 'Mi', 'Do', 'Fr'][idx]}</Text>
+                    <TouchableOpacity onPress={() => onDayInfo(day)} hitSlop={8}>
+                      <MaterialIcons name="info-outline" size={14} color="#6b7280" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+            {maxMenus === 0 ? (
+              <View style={styles.tr}>
+                <View style={styles.tdLabel} />
+                <View style={[styles.td, { flex: 5, borderLeftWidth: 1, borderColor: '#eaecef' }]}>
+                  <Text style={styles.emptyText}>Kein Speiseplan im gewählten Zeitraum gefunden</Text>
+                </View>
+              </View>
+            ) : (
+              tableRows.rows.map((row) => (
+                <View key={row.key} style={styles.tr}>
+                  <View style={styles.tdLabel}>
+                    <Text style={styles.tdLabelText}>{row.label}</Text>
+                  </View>
+                  {weekDays.map((day) => {
+                    const dayData = tableRows.dayMap.get(toYmd(day));
+                    const menus = dayData?.menulines || [];
+                    let value = '—';
+                    if (row.key === 'starter') value = menus[0]?.starter?.title || '—';
+                    else if (row.key === 'dessert') value = menus[0]?.dessert?.title || '—';
+                    else {
+                      const index = Number(row.key.replace('menu-', '')) - 1;
+                      value = menus[index]?.mainCourse?.title || '—';
+                    }
+                    const secondary = row.key === 'starter' || row.key === 'dessert';
+                    return (
+                      <View key={`${row.key}-${toYmd(day)}`} style={styles.td}>
+                        <Text style={[styles.tdText, secondary && styles.tdSecondary]} numberOfLines={8}>
+                          {value}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ))
+            )}
+          </View>
         </View>
-      </View>
+      )}
 
       <Modal visible={menulinePickerOpen} transparent animationType="slide">
         <Pressable style={styles.modalBackdrop} onPress={() => setMenulinePickerOpen(false)}>
@@ -465,6 +561,38 @@ const styles = StyleSheet.create({
   },
   pdfBtnDisabled: { opacity: 0.5 },
   pdfBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  mobileTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 10,
+  },
+  mobileFiltersRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  mobileSelectBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+  },
+  pdfBtnMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#111827',
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
   monthNav: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -528,6 +656,20 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderLeftWidth: 0,
   },
+  cornerMobile: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 80,
+    width: 80,
+    minHeight: 48,
+    borderLeftWidth: 0,
+  },
+  dayColMobile: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 120,
+    width: 120,
+  },
   thInner: { flexDirection: 'row', alignItems: 'center', gap: 4, justifyContent: 'center' },
   thText: { fontSize: 11, fontWeight: '600', color: '#6b7280' },
   tdLabel: {
@@ -583,6 +725,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontSize: 16,
   },
-  primaryBtn: { backgroundColor: '#0a7ea4', padding: 14, borderRadius: 10, alignItems: 'center' },
+  primaryBtn: { backgroundColor: '#111827', padding: 14, borderRadius: 10, alignItems: 'center' },
   primaryBtnText: { color: '#fff', fontWeight: '700' },
 });

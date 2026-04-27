@@ -124,7 +124,7 @@ export default function ChildMandateTab({ childId, facilityId }: ChildMandateTab
            </View>
            {item.document_url && (
               <TouchableOpacity onPress={() => openDocument(item.document_url!)} style={styles.iconBtn}>
-                 <Ionicons name="document-text-outline" size={20} color="#007AFF" />
+                 <Ionicons name="document-text-outline" size={20} color="#111827" />
               </TouchableOpacity>
            )}
         </View>
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   badgeActive: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F1F5F9',
   },
   badgeExpired: {
     backgroundColor: '#F3F4F6',
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
   },
   iconBtn: {
     padding: 8,
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#F8FAFC',
     borderRadius: 20,
   },
   cardBody: {

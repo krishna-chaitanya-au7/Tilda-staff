@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fetchMensaMealStats, type MensaAllergyDetail } from '@/components/mensa/mensaStats';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 
 type Props = {
   facilityId: string;
@@ -18,6 +19,7 @@ type Props = {
 };
 
 export function MensaStatsCards({ facilityId, facilityType }: Props) {
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalEaters: 0,
@@ -65,11 +67,13 @@ export function MensaStatsCards({ facilityId, facilityType }: Props) {
         title="Esser Gesamt"
         value={stats.totalEaters}
         icon={<MaterialIcons name="restaurant" size={20} color="#6b7280" />}
+        isMobile={isMobile}
       />
       <StatCard
         title="Esser (Heute)"
         value={stats.todayEaters}
         icon={<MaterialIcons name="people" size={20} color="#6b7280" />}
+        isMobile={isMobile}
       />
       <StatCard
         title="Abmeldungen (Heute)"
@@ -77,6 +81,7 @@ export function MensaStatsCards({ facilityId, facilityType }: Props) {
         icon={<MaterialIcons name="cancel" size={20} color="#6b7280" />}
         showInfo
         onInfo={() => setInfoModal('canceled')}
+        isMobile={isMobile}
       />
       <StatCard
         title="Allergiker (Heute)"
@@ -84,6 +89,7 @@ export function MensaStatsCards({ facilityId, facilityType }: Props) {
         icon={<MaterialIcons name="warning" size={20} color="#6b7280" />}
         showInfo
         onInfo={() => setInfoModal('allergy')}
+        isMobile={isMobile}
       />
 
       <Modal visible={infoModal !== null} transparent animationType="fade">
@@ -142,15 +148,17 @@ function StatCard({
   icon,
   showInfo,
   onInfo,
+  isMobile,
 }: {
   title: string;
   value: number;
   icon: ReactNode;
   showInfo?: boolean;
   onInfo?: () => void;
+  isMobile?: boolean;
 }) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isMobile && styles.cardMobile]}>
       {showInfo && onInfo ? (
         <TouchableOpacity style={styles.infoBtn} onPress={onInfo} hitSlop={12}>
           <MaterialIcons name="info-outline" size={16} color="#9ca3af" />
@@ -178,6 +186,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     position: 'relative',
+  },
+  cardMobile: {
+    width: '100%',
+    padding: 12,
   },
   cardInner: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   iconWrap: {
@@ -212,5 +224,5 @@ const styles = StyleSheet.create({
   allergyName: { fontWeight: '600', fontSize: 14, color: '#111827' },
   allergyMeal: { fontSize: 13, color: '#4b5563', marginTop: 2 },
   closeBtn: { marginTop: 12, alignSelf: 'center' },
-  closeBtnText: { color: '#0a7ea4', fontWeight: '700' },
+  closeBtnText: { color: '#111827', fontWeight: '700' },
 });

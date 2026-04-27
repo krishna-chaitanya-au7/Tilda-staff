@@ -44,6 +44,88 @@ export type FacilityEventItem = {
   event_type?: 'event' | 'course' | null;
 };
 
+/** Row from `facility_course_schedule_days` (per-session calendar placement). */
+export type FacilityCourseScheduleDayRow = {
+  id: string;
+  course_id: string;
+  session_date: string;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+export function mapFacilityCourseRowToEventItem(row: any): FacilityEventItem | null {
+  if (!row?.id) return null;
+  return {
+    id: String(row.id),
+    sourceTable: 'facility_courses',
+    title: String(row.title || ''),
+    description: row.description ?? null,
+    start_date: String(row.start_date),
+    end_date: String(row.end_date),
+    start_time: row.start_time ?? null,
+    end_time: row.end_time ?? null,
+    all_day: !!row.all_day,
+    location: row.location ?? null,
+    color: row.color ?? null,
+    category: row.category ?? null,
+    target_classes: row.target_classes,
+    cancel_meal: row.cancel_meal,
+    event_type: 'course',
+  };
+}
+
+/** One calendar item per session day; id is stable for React keys (aligned with bissfest_tool). */
+export function mapFacilityCourseSessionToEventItem(
+  courseRow: any,
+  sessionRow: FacilityCourseScheduleDayRow
+): FacilityEventItem | null {
+  if (!courseRow?.id || !sessionRow?.id || !sessionRow.session_date) return null;
+  const courseId = String(courseRow.id);
+  const sessionId = String(sessionRow.id);
+  const date = String(sessionRow.session_date).slice(0, 10);
+  return {
+    id: `facility_courses:${courseId}:${sessionId}`,
+    sourceTable: 'facility_courses',
+    title: String(courseRow.title || ''),
+    description: courseRow.description ?? null,
+    start_date: date,
+    end_date: date,
+    start_time: sessionRow.start_time ?? null,
+    end_time: sessionRow.end_time ?? null,
+    all_day: false,
+    location: courseRow.location ?? null,
+    color: courseRow.color ?? null,
+    category: courseRow.category ?? null,
+    target_classes: courseRow.target_classes,
+    cancel_meal: courseRow.cancel_meal,
+    event_type: 'course',
+  };
+}
+
+export function facilityCourseSessionEvents(
+  sessions: FacilityCourseScheduleDayRow[],
+  courseById: Map<string, any>
+): FacilityEventItem[] {
+  return sessions
+    .map((s) => {
+      const c = courseById.get(String(s.course_id));
+      if (!c) return null;
+      return mapFacilityCourseSessionToEventItem(c, s);
+    })
+    .filter((x): x is FacilityEventItem => x != null);
+}
+
+/** Courses with no `facility_course_schedule_days` rows: use parent date range on the calendar. */
+export function facilityCourseLegacyEvents(
+  courseRows: any[] | null,
+  courseIdsWithAnySchedule: Set<string>
+): FacilityEventItem[] {
+  return (courseRows || [])
+    .filter((row) => row?.id != null && !courseIdsWithAnySchedule.has(String(row.id)))
+    .map((row) => mapFacilityCourseRowToEventItem(row))
+    .filter((x): x is FacilityEventItem => x != null);
+}
+
 export const LEGACY_ACADEMIC_YEAR_ID = 1;
 
 /** Supabase query helper for tables scoped by academic_year. */
@@ -131,7 +213,7 @@ export function getFacilityEventsVisibleRange(weekOf: string, viewMode: 'week' |
 }
 
 export function tailwindColorToHex(c: string | null | undefined): string {
-  if (!c) return '#38bdf8';
+  if (!c) return '#6B7280';
   const s = String(c).trim();
   if (s.startsWith('#') && s.length >= 7) return s.slice(0, 7);
   const compact = s.replace(/\s/g, '');
@@ -148,7 +230,7 @@ export function tailwindColorToHex(c: string | null | undefined): string {
   for (const [k, v] of Object.entries(map)) {
     if (compact.includes(k.replace('/', '')) || compact.includes(k)) return v;
   }
-  return '#38bdf8';
+  return '#6B7280';
 }
 
 export function getEventVisuals(subjectName: string): { category: string; colorHex: string } {
@@ -157,7 +239,7 @@ export function getEventVisuals(subjectName: string): { category: string; colorH
     return { category: 'Kurs/AG', colorHex: '#8b5cf6' };
   }
   if (n.includes('konferenz')) {
-    return { category: 'room-booking', colorHex: '#14b8a6' };
+    return { category: 'room-booking', colorHex: '#3b82f6' };
   }
   if (n.includes('wandertag') || n.includes('fest') || n.includes('veranstaltung')) {
     return { category: 'Schulveranstaltung', colorHex: '#3b82f6' };
@@ -167,7 +249,7 @@ export function getEventVisuals(subjectName: string): { category: string; colorH
 
 export function getFacilityEventVisuals(ev: FacilityEventItem): { category: string; colorHex: string } {
   if (ev.event_type === 'course') {
-    return { category: 'Kurs / AG', colorHex: tailwindColorToHex(ev.color || 'bg-violet-400/70') };
+    return { category: 'Kurs / AG', colorHex: '#8b5cf6' };
   }
   const categoryLabelMap: Record<string, string> = {
     general: 'Allgemein',
@@ -177,7 +259,7 @@ export function getFacilityEventVisuals(ev: FacilityEventItem): { category: stri
     other: 'Sonstiges',
   };
   const category = categoryLabelMap[ev.category || 'general'] || 'Allgemein';
-  return { category, colorHex: tailwindColorToHex(ev.color || 'bg-sky-400') };
+  return { category, colorHex: '#3b82f6' };
 }
 
 export function buildGrouped(visibleRows: AssignmentRow[]) {

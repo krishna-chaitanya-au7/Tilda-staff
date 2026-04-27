@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { ThemedText } from '@/components/themed-text';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import Animated, { 
   useSharedValue, 
   useAnimatedStyle, 
@@ -111,6 +112,7 @@ export default function AttendanceLogsPanel({
   accessibleFacilities,
   useKindergartenSchedule = false,
 }: AttendanceLogsPanelProps) {
+  const isMobile = useIsMobile();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -436,15 +438,15 @@ export default function AttendanceLogsPanel({
 
   const getStatusStyle = (level: string) => {
     switch (level) {
-      case 'success': return { color: '#10B981', icon: 'checkmark-circle' }; // emerald-500
-      case 'warning': return { color: '#F59E0B', icon: 'alert-circle' }; // amber-500
-      case 'error': return { color: '#F43F5E', icon: 'close-circle' }; // rose-500
+      case 'success': return { color: '#111827', icon: 'checkmark-circle' }; // emerald-500
+      case 'warning': return { color: '#111827', icon: 'alert-circle' }; // amber-500
+      case 'error': return { color: '#111827', icon: 'close-circle' }; // rose-500
       default: return { color: '#0EA5E9', icon: 'information-circle' }; // sky-500
     }
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isMobile && styles.containerMobile]}>
       <View style={styles.header}>
         <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
           <Ionicons name="information-circle" size={16} color="#27272A" />
@@ -481,7 +483,7 @@ export default function AttendanceLogsPanel({
                                 <Text style={styles.timeText}>{log.time}</Text>
                              </View>
                              <View style={styles.actorBadge}>
-                                <Ionicons name="person" size={10} color="#0369A1" style={{ marginRight: 4 }}/>
+                                <Ionicons name="person" size={10} color="#111827" style={{ marginRight: 4 }}/>
                                 <Text style={styles.actorText} numberOfLines={1}>{log.actor}</Text>
                              </View>
                            </View>
@@ -509,12 +511,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(228,228,231,0.7)', // border-zinc-200/70
     height: 450, // ~28rem
     overflow: 'hidden',
+    // Mobile override below via containerMobile
     // Shadow similar to shadow-[0_6px_30px_-12px_rgb(0_0_0/0.25)]
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.15,
     shadowRadius: 15,
     elevation: 5,
+  },
+  containerMobile: {
+    height: 300,
+    borderRadius: 16,
   },
   header: {
     flexDirection: 'row',
@@ -543,11 +550,11 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#10B981', // emerald-500
+    backgroundColor: '#111827', // emerald-500
   },
   liveText: {
     fontSize: 10,
-    color: '#065F46', // emerald-800 (darker text for contrast)
+    color: '#374151', // emerald-800 (darker text for contrast)
     fontWeight: '600',
   },
   scrollContainer: {
@@ -604,7 +611,7 @@ const styles = StyleSheet.create({
   },
   actorText: {
     fontSize: 10,
-    color: '#0369A1', // sky-700
+    color: '#111827', // sky-700
     fontWeight: '600',
   },
   messageText: {

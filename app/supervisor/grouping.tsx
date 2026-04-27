@@ -214,7 +214,7 @@ const GroupingRow = React.memo(({
                style={styles.actionIconBtn}
                onPress={() => onViewDetails(item)}
             >
-               <Ionicons name="eye-outline" size={18} color="#007AFF" />
+               <Ionicons name="eye-outline" size={18} color="#111827" />
            </TouchableOpacity>
          </View>
       </View>
@@ -746,9 +746,9 @@ const styles = StyleSheet.create({
   modalContent: { backgroundColor: '#fff', borderRadius: 12, padding: 8, minWidth: 220, maxHeight: 400, shadowColor: "#000", shadowOffset: {width:0, height:4}, shadowOpacity: 0.1, shadowRadius: 10, elevation: 10 },
   modalTitle: { fontSize: 14, fontWeight: '600', marginBottom: 8, paddingHorizontal: 8, color: '#6B7280', textTransform: 'uppercase' },
   modalItem: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f0f0f0' },
-  modalItemSelected: { backgroundColor: '#F0F9FF' },
+  modalItemSelected: { backgroundColor: '#F8FAFC' },
   modalItemText: { fontSize: 14, color: '#374151' },
-  modalItemTextSelected: { fontWeight: '600', color: '#0284C7' },
+  modalItemTextSelected: { fontWeight: '600', color: '#111827' },
   
   emptyText: { textAlign: 'center', marginTop: 40, color: '#9CA3AF' },
 });

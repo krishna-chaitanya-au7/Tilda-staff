@@ -15,6 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { supabase } from '@/lib/supabase';
 import { RoleBadge } from '@/components/RoleBadge';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { Colors, SCREEN_HEADER_TOP_PAD } from '@/constants/theme';
 
 interface PollOption {
@@ -148,8 +149,8 @@ export default function SupervisorMessages() {
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
 
   // --- DERIVED STATE ---
-  
-  const isMobile = width < 768;
+
+  const isMobile = useIsMobile();
   // 3-column layout: Left (List), Middle (Chat), Right (Participants)
   // On Mobile: Only 1 column visible at a time
   // On Tablet/Desktop:
@@ -1435,7 +1436,7 @@ export default function SupervisorMessages() {
                  <View style={styles.chatHeaderLeft}>
                     {isMobile && selectedThread && (
                        <TouchableOpacity onPress={() => setSelectedThreadId(null)} style={{ marginRight: 8 }}>
-                          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+                          <Ionicons name="arrow-back" size={24} color="#111827" />
                        </TouchableOpacity>
                     )}
                     {selectedThread ? (
@@ -1456,7 +1457,7 @@ export default function SupervisorMessages() {
                     onPress={() => isMobile ? setIsParticipantsModalVisible(true) : setShowParticipantsOverlay(!showParticipantsOverlay)} 
                     style={{ padding: 8, marginRight: 2}}
                  >
-                    <Ionicons name={!isMobile && showParticipantsOverlay ? "people" : "people-outline"} size={24} color="#007AFF" />
+                    <Ionicons name={!isMobile && showParticipantsOverlay ? "people" : "people-outline"} size={24} color="#111827" />
                  </TouchableOpacity>
             </View>
 
@@ -1526,7 +1527,7 @@ export default function SupervisorMessages() {
                                                             <Text style={{ fontSize: 12, color: isMe ? 'rgba(255,255,255,0.8)' : '#666' }}>{opt.votes}</Text>
                                                          </View>
                                                          <View style={[styles.progressBarBG, { backgroundColor: isMe ? 'rgba(255,255,255,0.2)' : '#F2F2F7' }]}>
-                                                            <View style={[styles.progressBarFill, { width: `${percentage}%`, backgroundColor: isMe ? 'rgba(255,255,255,0.5)' : '#007AFF' }]} />
+                                                            <View style={[styles.progressBarFill, { width: `${percentage}%`, backgroundColor: isMe ? 'rgba(255,255,255,0.5)' : '#111827' }]} />
                                                          </View>
                                                       </TouchableOpacity>
                                                    );
@@ -1590,7 +1591,7 @@ export default function SupervisorMessages() {
                                          setPollOptions(newOpts);
                                       }}
                                    >
-                                      <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+                                      <Ionicons name="trash-outline" size={20} color="#111827" />
                                    </TouchableOpacity>
                                 )}
                              </View>
@@ -1610,10 +1611,10 @@ export default function SupervisorMessages() {
    
                     <View style={[styles.inputContainer, { backgroundColor: '#fff', minHeight: 60 }]}>
                        <TouchableOpacity style={styles.inputIcon} onPress={openPollComposer}>
-                          <Ionicons name="stats-chart" size={24} color="#007AFF" />
+                          <Ionicons name="stats-chart" size={24} color="#111827" />
                        </TouchableOpacity>
                        <TouchableOpacity style={styles.inputIcon} onPress={handlePickImage}>
-                          <Ionicons name="attach" size={24} color="#007AFF" />
+                          <Ionicons name="attach" size={24} color="#111827" />
                        </TouchableOpacity>
                        <TextInput style={styles.messageInput} placeholder="Nachricht schreiben..." placeholderTextColor="#999" value={newMessageText} onChangeText={setNewMessageText} onSubmitEditing={handleSendMessage} />
                        <TouchableOpacity style={styles.sendButton} onPress={handleSendMessage}>
@@ -1833,7 +1834,7 @@ export default function SupervisorMessages() {
                  closeActionSheet();
                }}
              >
-               <Text style={{ color: '#b91c1c', fontWeight: '600' }}>Block user</Text>
+               <Text style={{ color: '#111827', fontWeight: '600' }}>Block user</Text>
              </TouchableOpacity>
              <TouchableOpacity
                style={{ paddingHorizontal: 16, paddingVertical: 14 }}
@@ -1939,7 +1940,7 @@ const styles = StyleSheet.create({
   messageInput: { flex: 1, height: 40, borderRadius: 20, borderWidth: 1, borderColor: '#E5E5EA', paddingHorizontal: 16, fontSize: 14 },
   sendButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#999', justifyContent: 'center', alignItems: 'center' },
   messageBubble: { maxWidth: '75%', padding: 12, borderRadius: 16, marginBottom: 8 },
-  messageBubbleMe: { alignSelf: 'flex-end', backgroundColor: '#007AFF', borderBottomRightRadius: 4 },
+  messageBubbleMe: { alignSelf: 'flex-end', backgroundColor: '#111827', borderBottomRightRadius: 4 },
   messageBubbleOther: { alignSelf: 'flex-start', backgroundColor: '#F2F2F7', borderBottomLeftRadius: 4 },
   messageTextMe: { color: '#fff', fontSize: 14 },
   messageTextOther: { color: '#000', fontSize: 14 },
@@ -1948,7 +1949,7 @@ const styles = StyleSheet.create({
   pollQuestion: { fontWeight: '600', marginBottom: 8 },
   pollOption: { borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 6, backgroundColor: 'transparent', overflow: 'hidden' },
   progressBarBG: { height: 4, backgroundColor: '#F2F2F7', borderRadius: 2, marginTop: 4, overflow: 'hidden' },
-  progressBarFill: { height: '100%', backgroundColor: '#007AFF', borderRadius: 2 },
+  progressBarFill: { height: '100%', backgroundColor: '#111827', borderRadius: 2 },
   participantsSection: { flex: 1, borderTopWidth: 1, borderTopColor: '#E5E5EA', backgroundColor: '#fff' },
   pollComposer: { padding: 16, backgroundColor: '#f9f9f9', borderTopWidth: 1, borderTopColor: '#e5e5e5' },
   pollComposerHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
@@ -1958,9 +1959,9 @@ const styles = StyleSheet.create({
   pollOptionInput: { flex: 1, backgroundColor: '#fff', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ddd' },
   deleteOptionButton: { padding: 4 },
   addOptionButton: { padding: 8 },
-  addOptionText: { color: '#007AFF' },
+  addOptionText: { color: '#111827' },
   pollSettings: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 10 },
-  createPollButton: { backgroundColor: '#007AFF', padding: 12, borderRadius: 8, alignItems: 'center' },
+  createPollButton: { backgroundColor: '#111827', padding: 12, borderRadius: 8, alignItems: 'center' },
   createPollButtonText: { color: '#fff', fontWeight: 'bold' },
   messageFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },

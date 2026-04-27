@@ -92,7 +92,7 @@ export default function AttendanceEventDialog({
   };
 
   const title = type === 'late' ? 'Verspätet' : 'Früher gegangen';
-  const color = type === 'late' ? '#F59E0B' : '#3B82F6'; // Amber / Blue
+  const color = type === 'late' ? '#111827' : '#111827'; // Amber / Blue
 
   return (
     <Modal

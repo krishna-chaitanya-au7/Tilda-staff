@@ -101,7 +101,7 @@ export default function UserEditScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.center}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color="#111827" />
       </ThemedView>
     );
   }
@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
     flex: 0.3,
   },
   saveButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#111827',
     marginHorizontal: 16,
     marginTop: 24,
     paddingVertical: 16,

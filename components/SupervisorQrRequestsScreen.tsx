@@ -135,10 +135,10 @@ export default function SupervisorQrRequestsScreen() {
 
   const getStatusStyle = (status: string) => {
     switch(status) {
-      case 'approved': return { backgroundColor: '#E8F5E9', borderColor: '#4CAF50' };
-      case 'rejected': return { backgroundColor: '#FFEBEE', borderColor: '#F44336' };
-      case 'scanned': return { backgroundColor: '#E3F2FD', borderColor: '#2196F3' };
-      default: return { backgroundColor: '#FFF3E0', borderColor: '#FF9800' };
+      case 'approved': return { backgroundColor: '#F1F5F9', borderColor: '#111827' };
+      case 'rejected': return { backgroundColor: '#F1F5F9', borderColor: '#111827' };
+      case 'scanned': return { backgroundColor: '#F1F5F9', borderColor: '#2196F3' };
+      default: return { backgroundColor: '#F1F5F9', borderColor: '#FF9800' };
     }
   };
 
@@ -198,16 +198,16 @@ export default function SupervisorQrRequestsScreen() {
                  {selectedRequest.status === 'pending' && (
                    <View style={styles.actions}>
                       <TouchableOpacity 
-                        style={[styles.actionButton, { backgroundColor: '#FFEBEE' }]} 
+                        style={[styles.actionButton, { backgroundColor: '#F1F5F9' }]} 
                         onPress={() => handleStatusUpdate(selectedRequest.id, 'rejected')}
                       >
-                         <Text style={{ color: '#D32F2F', fontWeight: '600' }}>Reject</Text>
+                         <Text style={{ color: '#111827', fontWeight: '600' }}>Reject</Text>
                       </TouchableOpacity>
                       <TouchableOpacity 
-                        style={[styles.actionButton, { backgroundColor: '#E8F5E9' }]}
+                        style={[styles.actionButton, { backgroundColor: '#F1F5F9' }]}
                         onPress={() => handleStatusUpdate(selectedRequest.id, 'approved')}
                       >
-                         <Text style={{ color: '#2E7D32', fontWeight: '600' }}>Approve</Text>
+                         <Text style={{ color: '#111827', fontWeight: '600' }}>Approve</Text>
                       </TouchableOpacity>
                    </View>
                  )}

@@ -107,5 +107,5 @@ export default function PlanSettingsScreen() {
 
 const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  err: { color: '#b91c1c' },
+  err: { color: '#111827' },
 });

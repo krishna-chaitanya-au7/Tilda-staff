@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tilda Staff",
     "slug": "Tilda-staff",
-    "version": "1.1.3",
+    "version": "1.1.5",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "tildastaff",
@@ -12,13 +12,13 @@
       "supportsTablet": true,
       "requireFullScreen": false,
       "bundleIdentifier": "tildastaff.app",
-      "buildNumber": "32",
+      "buildNumber": "36",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIDeviceFamily": [
+          1,
           2
         ],
-        "LSRequiresIPhoneOS": false,
         "NSCameraUsageDescription": "Diese App benötigt Zugriff auf Ihre Kamera, um QR-Codes zu scannen.",
         "NSPhotoLibraryUsageDescription": "Diese App benötigt Zugriff auf Ihre Fotos, um Bilder und Videos in Nachrichten und Anhängen zu senden.",
         "NSPhotoLibraryAddUsageDescription": "Diese App benötigt Zugriff auf Ihre Fotos, um Bilder zu speichern."
@@ -56,8 +56,6 @@
           }
         }
       ],
-      "./plugins/withIpadOnly.js",
-      "./plugins/withTabletOnly.js",
       [
         "expo-camera",
         {

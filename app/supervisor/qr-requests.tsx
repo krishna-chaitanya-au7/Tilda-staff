@@ -88,7 +88,7 @@ const QRRequestRow = React.memo(({
           <Ionicons 
             name={isSelected ? "checkbox" : "square-outline"} 
             size={24} 
-            color={isSelected ? "#007AFF" : "#C7C7CC"} 
+            color={isSelected ? "#111827" : "#C7C7CC"} 
             style={!hasCard && !latest ? { opacity: 0.5 } : {}}
           />
        </View>
@@ -124,7 +124,7 @@ const QRRequestRow = React.memo(({
         <View style={{ width: 60, alignItems: 'center' }}>
             {canDelete ? (
               <TouchableOpacity onPress={() => onDelete(item)}>
-                <Text style={{ color: '#FF3B30', fontSize: 12 }}>Delete</Text>
+                <Text style={{ color: '#111827', fontSize: 12 }}>Delete</Text>
               </TouchableOpacity>
             ) : <Text>-</Text>}
         </View>

@@ -332,7 +332,7 @@ export default function GroupsSettingsScreen() {
                     style={styles.deleteButton}
                     onPress={() => handleDeleteGroup(group.id, group.name)}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    <Ionicons name="trash-outline" size={18} color="#111827" />
                   </TouchableOpacity>
                 </View>
               ))
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
   modalItem: { padding: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f0f0f0' },
   modalItemSelected: { backgroundColor: '#F3F4F6' },
   modalItemText: { fontSize: 14, color: '#333' },
-  modalItemTextSelected: { fontWeight: '600', color: '#007AFF' },
+  modalItemTextSelected: { fontWeight: '600', color: '#111827' },
 
   // List
   listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

@@ -256,7 +256,7 @@ export default function PlanSettingsPanel({
                   </View>
                   <View style={[styles.closingRow, winW >= 640 && styles.closingRowWide]}>
                     <ClosingDaysMonthGrid
-                      compact
+                      compact={winW >= 640}
                       visibleMonth={monthDisplay}
                       selectedYmd={selectedSet}
                       interactive={false}
@@ -415,9 +415,9 @@ export default function PlanSettingsPanel({
                             hitSlop={8}
                           >
                             {deletingPeriodId === p.id ? (
-                              <ActivityIndicator size="small" color="#ef4444" />
+                              <ActivityIndicator size="small" color="#111827" />
                             ) : (
-                              <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                              <Ionicons name="trash-outline" size={20} color="#111827" />
                             )}
                           </TouchableOpacity>
                         </View>
@@ -611,7 +611,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   dateRowText: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  deleteLink: { fontSize: 14, color: '#dc2626', fontWeight: '600' },
+  deleteLink: { fontSize: 14, color: '#111827', fontWeight: '600' },
   emptyList: {
     flex: 1,
     alignItems: 'center',
@@ -736,7 +736,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e5e7eb',
   },
-  timePickerOkText: { color: '#007AFF', fontWeight: '600', fontSize: 16 },
+  timePickerOkText: { color: '#111827', fontWeight: '600', fontSize: 16 },
   timePickerInner: {
     backgroundColor: '#ffffff',
     borderBottomLeftRadius: 12,

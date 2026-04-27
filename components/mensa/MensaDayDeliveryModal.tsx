@@ -186,8 +186,8 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, paddingTop: 48, paddingHorizontal: 16, backgroundColor: '#f9fafb' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827', flex: 1 },
-  close: { color: '#0a7ea4', fontWeight: '600' },
-  err: { color: '#b91c1c' },
+  close: { color: '#111827', fontWeight: '600' },
+  err: { color: '#111827' },
   empty: { color: '#6b7280', marginTop: 24, textAlign: 'center' },
   list: { paddingBottom: 32 },
   card: {
@@ -200,6 +200,6 @@ const styles = StyleSheet.create({
   },
   name: { fontSize: 16, fontWeight: '600', color: '#111827' },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 4 },
-  allergy: { fontSize: 13, color: '#b45309', marginTop: 8, fontWeight: '600' },
+  allergy: { fontSize: 13, color: '#374151', marginTop: 8, fontWeight: '600' },
   line: { fontSize: 14, color: '#374151', marginTop: 6 },
 });
