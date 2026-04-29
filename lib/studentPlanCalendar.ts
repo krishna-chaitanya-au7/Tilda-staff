@@ -402,7 +402,26 @@ export function buildFacilityDisplayByCell(
         dayPeriods.push({ start, end, idx, startMin, endMin });
       });
       dayPeriods.sort((a, b) => a.idx - b.idx);
-      if (dayPeriods.length === 0) continue;
+
+      // If this weekday has no periods configured at all, we can still place
+      // the event on the first time-slot of the grid as a fallback (otherwise
+      // schools without per-day period config silently drop every event).
+      if (dayPeriods.length === 0) {
+        if (timeSlots.length === 0) continue;
+        placementsByDay[day] = placementsByDay[day] || [];
+        placementsByDay[day].push({
+          startIdx: 0,
+          span: 1,
+          ev,
+          start: ev.all_day
+            ? '—'
+            : String(ev.start_time || timeSlots[0] || '').slice(0, 5),
+          end: ev.all_day
+            ? '—'
+            : String(ev.end_time || ev.start_time || timeSlots[0] || '').slice(0, 5),
+        });
+        continue;
+      }
 
       const visibleStart = dayPeriods[0].start;
       const visibleEnd = dayPeriods[dayPeriods.length - 1].end;
@@ -426,11 +445,44 @@ export function buildFacilityDisplayByCell(
       const overlapping = dayPeriods.filter(
         (p) => p.endMin > eventStartMin && p.startMin < eventEndMin
       );
-      if (overlapping.length === 0) continue;
 
-      const mergedStartIdx = overlapping[0].idx;
-      const mergedEndIdx = overlapping[overlapping.length - 1].idx;
-      const mergedSpan = mergedEndIdx - mergedStartIdx + 1;
+      let mergedStartIdx: number;
+      let mergedSpan: number;
+
+      if (overlapping.length > 0) {
+        // Standard case: event overlaps one or more school periods.
+        const mergedEndIdx = overlapping[overlapping.length - 1].idx;
+        mergedStartIdx = overlapping[0].idx;
+        mergedSpan = mergedEndIdx - mergedStartIdx + 1;
+      } else {
+        // Out-of-period case: e.g. an after-school Kurs at 14:00 when periods
+        // end at 13:00. Don't drop the event — anchor it to the closest
+        // period so it still renders in the day column. The card's visible
+        // time label still shows the *real* start–end so the user reads the
+        // correct time even if the block sits in a different period row.
+        const lastPeriod = dayPeriods[dayPeriods.length - 1];
+        const firstPeriod = dayPeriods[0];
+        if (eventStartMin >= lastPeriod.endMin) {
+          mergedStartIdx = lastPeriod.idx;
+        } else if (eventEndMin <= firstPeriod.startMin) {
+          mergedStartIdx = firstPeriod.idx;
+        } else {
+          // Falls in a gap between periods — pick the period whose start
+          // time is closest to the event's start.
+          let closest = firstPeriod;
+          let closestDistance = Math.abs(firstPeriod.startMin - eventStartMin);
+          for (const p of dayPeriods) {
+            const distance = Math.abs(p.startMin - eventStartMin);
+            if (distance < closestDistance) {
+              closest = p;
+              closestDistance = distance;
+            }
+          }
+          mergedStartIdx = closest.idx;
+        }
+        mergedSpan = 1;
+      }
+
       const mergedStartSlot = timeSlots[mergedStartIdx];
       if (mergedStartSlot) {
         placementsByDay[day] = placementsByDay[day] || [];

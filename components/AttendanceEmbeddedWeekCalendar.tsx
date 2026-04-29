@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -10,6 +12,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { haptics } from '@/lib/haptics';
 import {
   eachDayOfInterval,
   endOfMonth,
@@ -96,8 +100,22 @@ export default function AttendanceEmbeddedWeekCalendar({
   onWeekNavigate,
 }: Props) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const weekOf = useMemo(() => formatLocalYYYYMMDD(getMonday(anchorDate)), [anchorDate]);
   const currentMonday = useMemo(() => getMonday(parseISODateLocal(weekOf)), [weekOf]);
+
+  type PreviewData = {
+    title: string;
+    category: string;
+    accentColor: string;
+    dateLabel: string;
+    timeLabel: string;
+    classes: string;
+    teacher?: string;
+    room?: string;
+    cancelMeal?: boolean;
+  };
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
 
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [isLocked, setIsLocked] = useState(false);
@@ -562,8 +580,15 @@ export default function AttendanceEmbeddedWeekCalendar({
     return eachDayOfInterval({ start, end });
   }, [monthAnchor]);
 
+  type MonthStripSource =
+    | { type: 'facility'; ev: FacilityEventItem }
+    | { type: 'lesson'; row: AssignmentRow };
+  type MonthStripEntry =
+    | { kind: 'closing' }
+    | { kind: 'strip'; label: string; bg: string; source: MonthStripSource };
+
   const monthCellStripByKey = useMemo(() => {
-    const map: Record<string, { kind: 'closing' } | { kind: 'strip'; label: string; bg: string }> = {};
+    const map: Record<string, MonthStripEntry> = {};
     const ymdInEventRange = (k: string, ev: FacilityEventItem) => {
       const s = String(ev.start_date).slice(0, 10);
       const e = String(ev.end_date).slice(0, 10);
@@ -579,7 +604,12 @@ export default function AttendanceEmbeddedWeekCalendar({
       if (dayEvents.length > 0) {
         const ev = [...dayEvents].sort((a, b) => String(a.title).localeCompare(String(b.title)))[0];
         const v = getFacilityEventVisuals(ev);
-        map[k] = { kind: 'strip', label: String(ev.title || '').trim() || v.category, bg: v.colorHex };
+        map[k] = {
+          kind: 'strip',
+          label: String(ev.title || '').trim() || v.category,
+          bg: v.colorHex,
+          source: { type: 'facility', ev },
+        };
         return;
       }
       const dow = d.getDay() === 0 ? 7 : d.getDay();
@@ -592,7 +622,12 @@ export default function AttendanceEmbeddedWeekCalendar({
         const more = dayRows.length - 1;
         const base = first.subject_name;
         const label = more > 0 ? `${base} (+${more})` : base;
-        map[k] = { kind: 'strip', label, bg: v.colorHex };
+        map[k] = {
+          kind: 'strip',
+          label,
+          bg: v.colorHex,
+          source: { type: 'lesson', row: first },
+        };
       }
     });
     return map;
@@ -617,9 +652,11 @@ export default function AttendanceEmbeddedWeekCalendar({
         '',
         'school' as PlanPerspective,
         '',
-        isLocked
+        // Always render facility events regardless of lock state — matches the
+        // staff calendar fix.
+        true
       ),
-    [facilityEvents, timeSlots, periods, isLocked]
+    [facilityEvents, timeSlots, periods]
   );
 
   const periodLabel = useMemo(() => computePeriodLabel('week', currentMonday), [currentMonday]);
@@ -665,6 +702,7 @@ export default function AttendanceEmbeddedWeekCalendar({
   };
 
   const showLessonPreview = (r: AssignmentRow, dayIndex: number) => {
+    haptics.tap();
     const monday = getMonday(parseISODateLocal(weekOf));
     const d = new Date(monday);
     d.setDate(monday.getDate() + (dayIndex - 1));
@@ -672,13 +710,19 @@ export default function AttendanceEmbeddedWeekCalendar({
     const mergedKey = `${r.subject_id}-${r.day_of_week}-${r.period_start}`;
     const mergedClasses = mergedClassesMap.get(mergedKey) || [];
     const clsLabel = mergedClasses.length > 0 ? mergedClasses.join(', ') : r.class;
-    Alert.alert(
-      r.subject_name,
-      `${dateLabel}\n${r.period_start}–${r.period_end}\nKlassen/Gruppen: ${clsLabel}`
-    );
+    const v = getEventVisuals(r.subject_name);
+    setPreviewData({
+      title: r.subject_name,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${r.period_start}–${r.period_end}`,
+      classes: clsLabel,
+    });
   };
 
   const showFacilityPreview = (ev: FacilityEventItem, start: string, end: string, dayIndex: number) => {
+    haptics.tap();
     const monday = getMonday(parseISODateLocal(weekOf));
     const d = new Date(monday);
     d.setDate(monday.getDate() + (dayIndex - 1));
@@ -686,10 +730,51 @@ export default function AttendanceEmbeddedWeekCalendar({
     const v = getFacilityEventVisuals(ev);
     const classesLabel =
       (ev.target_classes || []).length > 0 ? (ev.target_classes || []).join(', ') : 'Alle Klassen';
-    Alert.alert(
-      ev.title,
-      `${v.category}\n${dateLabel} · ${start}–${end}\n${classesLabel}${ev.cancel_meal ? '\nVerpflegung storniert' : ''}`
-    );
+    setPreviewData({
+      title: ev.title,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${start}–${end}`,
+      classes: classesLabel,
+      cancelMeal: ev.cancel_meal,
+    });
+  };
+
+  const showFacilityPreviewForDate = (ev: FacilityEventItem, day: Date) => {
+    haptics.tap();
+    const dateLabel = format(day, 'dd.MM.yyyy', { locale: de });
+    const v = getFacilityEventVisuals(ev);
+    const classesLabel =
+      (ev.target_classes || []).length > 0 ? (ev.target_classes || []).join(', ') : 'Alle Klassen';
+    const startStr = String(ev.start_time || '').slice(0, 5);
+    const endStr = String(ev.end_time || '').slice(0, 5);
+    setPreviewData({
+      title: ev.title,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: ev.all_day || !startStr ? 'Ganztägig' : `${startStr}–${endStr}`,
+      classes: classesLabel,
+      cancelMeal: ev.cancel_meal,
+    });
+  };
+
+  const showLessonPreviewForDate = (r: AssignmentRow, day: Date) => {
+    haptics.tap();
+    const dateLabel = format(day, 'dd.MM.yyyy', { locale: de });
+    const v = getEventVisuals(r.subject_name);
+    const mergedKey = `${r.subject_id}-${r.day_of_week}-${r.period_start}`;
+    const mergedClasses = mergedClassesMap.get(mergedKey) || [];
+    const clsLabel = mergedClasses.length > 0 ? mergedClasses.join(', ') : r.class;
+    setPreviewData({
+      title: r.subject_name,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${r.period_start}–${r.period_end}`,
+      classes: clsLabel,
+    });
   };
 
   const onRefresh = async () => {
@@ -776,17 +861,121 @@ export default function AttendanceEmbeddedWeekCalendar({
                   ]}
                 >
                   <Text style={styles.hdrDayText}>{dayDates[idx]}</Text>
-                  {closingDayKeys.has(weekDateKeys[idx]) ? (
-                    <View style={styles.closingBadge}>
-                      <Text style={styles.closingBadgeText}>Schließtag</Text>
-                    </View>
-                  ) : null}
                 </View>
               ))}
             </View>
 
             {timeSlots.length === 0 ? (
-              <Text style={styles.emptyGrid}>Keine Stunden im Stundenplan hinterlegt.</Text>
+              (() => {
+                const fallbackEventsByDay = [1, 2, 3, 4, 5].map((_, idx) => {
+                  const dateKey = weekDateKeys[idx];
+                  return dateKey
+                    ? facilityEvents.filter((ev) => {
+                        const s = String(ev.start_date).slice(0, 10);
+                        const e = String(ev.end_date).slice(0, 10);
+                        return dateKey >= s && dateKey <= e;
+                      })
+                    : [];
+                });
+                const closingByDay = [1, 2, 3, 4, 5].map((_, idx) => {
+                  const dateKey = weekDateKeys[idx];
+                  return dateKey ? closingDayKeys.has(dateKey) : false;
+                });
+                const totalFallbackEvents = fallbackEventsByDay.reduce(
+                  (sum, list) => sum + list.length,
+                  0
+                );
+                const totalClosingDays = closingByDay.filter(Boolean).length;
+                if (totalFallbackEvents === 0 && totalClosingDays === 0) {
+                  return <Text style={styles.emptyGrid}>Keine Stunden im Stundenplan hinterlegt.</Text>;
+                }
+                return (
+                  <View style={styles.gridRow}>
+                    <View style={[styles.timeCell, { width: TIME_COL_W }]} />
+                    {[1, 2, 3, 4, 5].map((di, idx) => {
+                      const dateKey = weekDateKeys[idx];
+                      const dayEvents = fallbackEventsByDay[idx];
+                      const isClosingDay = closingByDay[idx];
+                      return (
+                        <View
+                          key={`fallback-${di}`}
+                          style={[
+                            styles.cell,
+                            {
+                              flex: 1,
+                              minWidth: DAY_MIN_W,
+                              minHeight: ROW_H * 2,
+                              paddingVertical: 6,
+                            },
+                            todayDayIndex === di && styles.cellTodayBg,
+                          ]}
+                        >
+                          {isClosingDay ? (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => {
+                                const dayDate = parseISODateLocal(dateKey || '');
+                                haptics.tap();
+                                setPreviewData({
+                                  title: 'Schließtag',
+                                  category: 'Schließtag',
+                                  accentColor: '#dc2626',
+                                  dateLabel: format(dayDate, 'dd.MM.yyyy', { locale: de }),
+                                  timeLabel: 'Ganztägig',
+                                  classes: 'Alle Klassen',
+                                });
+                              }}
+                              style={{
+                                backgroundColor: '#dc2626',
+                                borderRadius: 6,
+                                paddingHorizontal: 6,
+                                paddingVertical: 4,
+                                marginBottom: 4,
+                              }}
+                            >
+                              <Text style={styles.eventTitle} numberOfLines={1}>
+                                Schließtag
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {dayEvents.map((ev) => {
+                            const v = getFacilityEventVisuals(ev);
+                            const startStr = String(ev.start_time || '').slice(0, 5);
+                            const endStr = String(ev.end_time || '').slice(0, 5);
+                            return (
+                              <TouchableOpacity
+                                key={`fallback-ev-${ev.id}-${di}`}
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  const dayDate = parseISODateLocal(dateKey || '');
+                                  showFacilityPreviewForDate(ev, dayDate);
+                                }}
+                                style={{
+                                  backgroundColor: v.colorHex || '#3b82f6',
+                                  borderRadius: 6,
+                                  paddingHorizontal: 6,
+                                  paddingVertical: 4,
+                                  marginBottom: 4,
+                                }}
+                              >
+                                <Text style={styles.eventTitle} numberOfLines={2}>
+                                  {ev.title}
+                                </Text>
+                                {!ev.all_day && startStr ? (
+                                  <Text style={styles.eventSub} numberOfLines={1}>
+                                    {startStr}
+                                    {endStr ? ` – ${endStr}` : ''}
+                                  </Text>
+                                ) : null}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              })()
             ) : (
               timeSlots.map((start) => {
                 const allBreak = [1, 2, 3, 4, 5].every((di) => isBreak(di, start));
@@ -850,7 +1039,7 @@ export default function AttendanceEmbeddedWeekCalendar({
                                     style={[
                                       styles.eventAbs,
                                       {
-                                        backgroundColor: v.colorHex,
+                                        backgroundColor: v.colorHex || '#3b82f6',
                                         left: `${leftPct}%`,
                                         width: `${wPct}%`,
                                         height: Math.max(ROW_H * fr.span - 6, ROW_H - 4),
@@ -881,7 +1070,7 @@ export default function AttendanceEmbeddedWeekCalendar({
                                     style={[
                                       span > 1 ? styles.lessonAbs : styles.lessonInline,
                                       {
-                                        backgroundColor: v.colorHex,
+                                        backgroundColor: v.colorHex || '#22c55e',
                                         minHeight: span > 1 ? ROW_H * span - 4 : undefined,
                                       },
                                     ]}
@@ -953,7 +1142,25 @@ export default function AttendanceEmbeddedWeekCalendar({
                   ]}
                   onPress={() => {
                     setSelectedDay(d);
-                    onWeekNavigate(d);
+                    if (strip?.kind === 'strip') {
+                      if (strip.source.type === 'facility') {
+                        showFacilityPreviewForDate(strip.source.ev, d);
+                      } else {
+                        showLessonPreviewForDate(strip.source.row, d);
+                      }
+                    } else if (strip?.kind === 'closing') {
+                      haptics.tap();
+                      setPreviewData({
+                        title: 'Schließtag',
+                        category: 'Schließtag',
+                        accentColor: '#dc2626',
+                        dateLabel: format(d, 'dd.MM.yyyy', { locale: de }),
+                        timeLabel: 'Ganztägig',
+                        classes: 'Alle Klassen',
+                      });
+                    } else {
+                      onWeekNavigate(d);
+                    }
                   }}
                   activeOpacity={0.85}
                 >
@@ -1004,6 +1211,75 @@ export default function AttendanceEmbeddedWeekCalendar({
           </View>
         </View>
       </View>
+
+      <Modal
+        visible={previewData != null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPreviewData(null)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.previewSheetBackdrop} onPress={() => setPreviewData(null)} />
+        <View
+          style={[
+            styles.previewSheet,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+          ]}
+        >
+          <View style={styles.previewSheetHandleRow}>
+            <View style={styles.previewSheetHandle} />
+          </View>
+          <View
+            style={[styles.previewAccent, { backgroundColor: previewData?.accentColor || '#22c55e' }]}
+          />
+          <View style={styles.previewBodyContent}>
+            <View style={styles.previewHeaderRow}>
+              <Text style={styles.previewSheetTitle} numberOfLines={2}>
+                {previewData?.title ?? ''}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setPreviewData(null)}
+                hitSlop={12}
+                style={styles.previewCloseIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Schließen"
+              >
+                <Ionicons name="close" size={22} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            {previewData?.category ? (
+              <View style={styles.previewCategoryPill}>
+                <Text style={styles.previewCategoryText}>{previewData.category}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.previewRow}>
+              <Ionicons name="calendar-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Datum</Text>
+              <Text style={styles.previewValue}>{previewData?.dateLabel ?? '—'}</Text>
+            </View>
+
+            <View style={styles.previewRow}>
+              <Ionicons name="time-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Zeit</Text>
+              <Text style={styles.previewValue}>{previewData?.timeLabel ?? '—'}</Text>
+            </View>
+
+            <View style={styles.previewRow}>
+              <Ionicons name="people-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Klassen</Text>
+              <Text style={styles.previewValue}>{previewData?.classes ?? '—'}</Text>
+            </View>
+
+            {previewData?.cancelMeal ? (
+              <View style={styles.previewRow}>
+                <Ionicons name="warning-outline" size={18} color="#b45309" style={styles.previewIcon} />
+                <Text style={[styles.previewValue, { color: '#b45309' }]}>Verpflegung storniert</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1043,12 +1319,12 @@ const styles = StyleSheet.create({
   hdrDayText: { fontSize: 10, fontWeight: '600', color: '#111827', textAlign: 'center' },
   closingBadge: {
     marginTop: 2,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#dc2626',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#111827' },
+  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#ffffff' },
   gridRow: { flexDirection: 'row', borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#e5e7eb' },
   timeCell: {
     paddingVertical: 3,
@@ -1112,6 +1388,98 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
   legendText: { fontSize: 11, color: '#6b7280' },
+  // Event-detail bottom sheet (mirrors StaffCalendarScreen)
+  previewSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  previewSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 12,
+  },
+  previewSheetHandleRow: {
+    paddingTop: 10,
+    paddingBottom: 6,
+    alignItems: 'center',
+  },
+  previewSheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#d1d5db',
+  },
+  previewAccent: {
+    height: 6,
+    width: '100%',
+  },
+  previewBodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  previewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  previewSheetTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  previewCloseIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  previewCategoryPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f3f4f6',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    marginBottom: 14,
+  },
+  previewCategoryText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  previewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#f3f4f6',
+  },
+  previewIcon: { marginRight: 12 },
+  previewLabel: {
+    width: 80,
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  previewValue: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
   modeSegment: {
     flexDirection: 'row',
     borderWidth: 1,

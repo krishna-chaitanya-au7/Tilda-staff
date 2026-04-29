@@ -14,13 +14,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import type { SubjectOptionRow } from '@/lib/loadCalendarSubjectOptions';
 import { formatLocalYYYYMMDD, parseISODateLocal } from '@/lib/studentPlanCalendar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DateTimePickerSheet } from './shared/DateTimePickerSheet';
 
 const NONE_VALUE = '__none__';
 
@@ -944,86 +944,80 @@ export default function CalendarCreateEntryModal({
           </ScrollView>
         </View>
 
-        {/* Date pickers */}
-        {dateFocus ? (
-          <DateTimePicker
-            value={
-              dateFocus === 'eventStart'
-                ? parseYmd(eventStartDate)
-                : dateFocus === 'eventEnd'
-                  ? parseYmd(eventEndDate)
-                  : parseYmd(courseSessions[dateFocus.index]?.date || formatLocalYYYYMMDD(new Date()))
+        {/* Date picker — same UX as Mensa Settings → Bestellschluss. Renders
+            inside its own card-style sheet over a dimmed backdrop, with a
+            "Fertig" header button. Replaces the previously-bare DateTimePicker
+            that overlaid the modal. */}
+        <DateTimePickerSheet
+          visible={dateFocus !== null}
+          mode="date"
+          value={
+            dateFocus === 'eventStart'
+              ? parseYmd(eventStartDate)
+              : dateFocus === 'eventEnd'
+                ? parseYmd(eventEndDate)
+                : dateFocus && dateFocus.kind === 'course'
+                  ? parseYmd(courseSessions[dateFocus.index]?.date || formatLocalYYYYMMDD(new Date()))
+                  : new Date()
+          }
+          onChange={(d) => {
+            const ymd = formatLocalYYYYMMDD(d);
+            if (dateFocus === 'eventStart') setEventStartDate(ymd);
+            else if (dateFocus === 'eventEnd') setEventEndDate(ymd);
+            else if (dateFocus && dateFocus.kind === 'course') {
+              const i = dateFocus.index;
+              setCourseSessions((prev) =>
+                prev.map((row, j) => (j === i ? { ...row, date: ymd } : row))
+              );
             }
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={(ev, d) => {
-              if (Platform.OS === 'android') setDateFocus(null);
-              if (ev.type === 'dismissed' || !d) return;
-              const ymd = formatLocalYYYYMMDD(d);
-              if (dateFocus === 'eventStart') setEventStartDate(ymd);
-              else if (dateFocus === 'eventEnd') setEventEndDate(ymd);
-              else {
-                const i = dateFocus.index;
-                setCourseSessions((prev) =>
-                  prev.map((row, j) => (j === i ? { ...row, date: ymd } : row))
-                );
-              }
-            }}
-          />
-        ) : null}
-        {Platform.OS === 'ios' && dateFocus ? (
-          <TouchableOpacity style={styles.iosDone} onPress={() => setDateFocus(null)}>
-            <Text style={styles.iosDoneText}>Fertig</Text>
-          </TouchableOpacity>
-        ) : null}
+          }}
+          onClose={() => setDateFocus(null)}
+        />
 
-        {timeFocus ? (
-          <DateTimePicker
-            value={combineDateAndHm(
-              timeFocus === 'eventStart'
-                ? eventStartDate
-                : timeFocus === 'eventEnd'
-                  ? eventEndDate
-                  : courseSessions[timeFocus.index]?.date || formatLocalYYYYMMDD(new Date()),
-              timeFocus === 'eventStart'
-                ? eventStartTime
-                : timeFocus === 'eventEnd'
-                  ? eventEndTime
-                  : timeFocus.slot === 'start'
+        {/* Time picker — same Bestellschluss UX. */}
+        <DateTimePickerSheet
+          visible={timeFocus !== null}
+          mode="time"
+          value={combineDateAndHm(
+            timeFocus === 'eventStart'
+              ? eventStartDate
+              : timeFocus === 'eventEnd'
+                ? eventEndDate
+                : timeFocus && timeFocus.kind === 'course'
+                  ? courseSessions[timeFocus.index]?.date || formatLocalYYYYMMDD(new Date())
+                  : formatLocalYYYYMMDD(new Date()),
+            timeFocus === 'eventStart'
+              ? eventStartTime
+              : timeFocus === 'eventEnd'
+                ? eventEndTime
+                : timeFocus && timeFocus.kind === 'course'
+                  ? timeFocus.slot === 'start'
                     ? courseSessions[timeFocus.index]?.startTime || '14:00'
                     : courseSessions[timeFocus.index]?.endTime || '15:30'
-            )}
-            mode="time"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={(ev, d) => {
-              if (Platform.OS === 'android') setTimeFocus(null);
-              if (ev.type === 'dismissed' || !d) return;
-              const hm = hmFromDate(d);
-              if (timeFocus === 'eventStart') setEventStartTime(hm);
-              else if (timeFocus === 'eventEnd') setEventEndTime(hm);
-              else {
-                const i = timeFocus.index;
-                const slot = timeFocus.slot;
-                setCourseSessions((prev) =>
-                  prev.map((row, j) =>
-                    j === i
-                      ? {
-                          ...row,
-                          startTime: slot === 'start' ? hm : row.startTime,
-                          endTime: slot === 'end' ? hm : row.endTime,
-                        }
-                      : row
-                  )
-                );
-              }
-            }}
-          />
-        ) : null}
-        {Platform.OS === 'ios' && timeFocus ? (
-          <TouchableOpacity style={styles.iosDone} onPress={() => setTimeFocus(null)}>
-            <Text style={styles.iosDoneText}>Fertig</Text>
-          </TouchableOpacity>
-        ) : null}
+                  : '00:00'
+          )}
+          onChange={(d) => {
+            const hm = hmFromDate(d);
+            if (timeFocus === 'eventStart') setEventStartTime(hm);
+            else if (timeFocus === 'eventEnd') setEventEndTime(hm);
+            else if (timeFocus && timeFocus.kind === 'course') {
+              const i = timeFocus.index;
+              const slot = timeFocus.slot;
+              setCourseSessions((prev) =>
+                prev.map((row, j) =>
+                  j === i
+                    ? {
+                        ...row,
+                        startTime: slot === 'start' ? hm : row.startTime,
+                        endTime: slot === 'end' ? hm : row.endTime,
+                      }
+                    : row
+                )
+              );
+            }
+          }}
+          onClose={() => setTimeFocus(null)}
+        />
 
         {/* Option sheets */}
         <Modal visible={pickerSheet != null} transparent animationType="fade">
@@ -1381,8 +1375,6 @@ const styles = StyleSheet.create({
   mergeTabTextOn: { color: '#fff' },
   childList: { maxHeight: 160, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8 },
   muted: { padding: 8, fontSize: 13, color: '#6b7280' },
-  iosDone: { alignItems: 'center', padding: 8, backgroundColor: '#fff' },
-  iosDoneText: { color: '#111827', fontWeight: '600' },
   pickBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',

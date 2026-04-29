@@ -41,6 +41,7 @@ import {
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
+import { haptics } from '@/lib/haptics';
 import type { SingleFacilityScope, SupervisorFacilityScope } from '@/lib/staffFacilityScope';
 import { loadClosingDayStrings } from '@/lib/calendarClosingDays';
 import { createSubjectEntryFromDialog } from '@/lib/addBaseSubjectSchedule';
@@ -213,9 +214,18 @@ export default function StaffCalendarScreen({
   const [color, setColor] = useState('#6B7280');
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end' | null>(null);
 
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTitle, setPreviewTitle] = useState('');
-  const [previewBody, setPreviewBody] = useState('');
+  type PreviewData = {
+    title: string;
+    category: string;
+    accentColor: string;
+    dateLabel: string;
+    timeLabel: string;
+    classes: string;
+    teacher?: string;
+    room?: string;
+    cancelMeal?: boolean;
+  };
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
 
   const [tourIndex, setTourIndex] = useState<number | null>(null);
   const [tourHoleRect, setTourHoleRect] = useState<HoleRect | null>(null);
@@ -1119,11 +1129,21 @@ export default function StaffCalendarScreen({
     [scheduleFacilityId, selectedAcademicYearId, periods, selectedClass, classes, loadAssignments]
   );
 
+  // Sync `monthAnchor` from `weekOf` only when the user enters month view, not
+  // on every `weekOf` change. The month-view chevrons set `monthAnchor`
+  // directly, so re-syncing here would overwrite their explicit choice with a
+  // value derived from `getMonday(...)` that can land in the previous month.
+  const prevViewModeRef = useRef(viewMode);
   useEffect(() => {
-    if (viewMode === 'month') {
-      const cm = getMonday(parseISODateLocal(weekOf));
-      setMonthAnchor(startOfMonth(cm));
+    if (prevViewModeRef.current !== 'month' && viewMode === 'month') {
+      const monday = getMonday(parseISODateLocal(weekOf));
+      // Use the first day of the *displayed* week's month — anchor on the
+      // Thursday of the week so a cross-month week resolves to the dominant
+      // month (matches ISO week conventions).
+      const thursday = addDays(monday, 3);
+      setMonthAnchor(startOfMonth(thursday));
     }
+    prevViewModeRef.current = viewMode;
   }, [viewMode, weekOf]);
 
   useEffect(() => {
@@ -1169,24 +1189,36 @@ export default function StaffCalendarScreen({
         facilityEvents,
         timeSlots,
         periods,
-        eventTargetClass,
+        // Pass empty string so the helper does NOT filter by `target_classes`.
+        // Month view also shows every event regardless of class scope; this
+        // makes the week grid match. Without this, a Kurs created with
+        // class-specific audience disappears in week view when the user is
+        // browsing a different class perspective, even though the same Kurs
+        // shows up in month view.
+        '',
         perspective,
         selectedEntityId,
-        isLocked
+        // Always render facility events in the week grid. The `isLocked`
+        // gate inside the helper used to drop Kurs / Schulveranstaltung etc.
+        // until the timetable was locked, which made events invisible to
+        // most users.
+        true
       ),
-    [
-      facilityEvents,
-      timeSlots,
-      periods,
-      eventTargetClass,
-      perspective,
-      selectedEntityId,
-      isLocked,
-    ]
+    [facilityEvents, timeSlots, periods, perspective, selectedEntityId]
   );
 
   const currentMonday = useMemo(() => getMonday(parseISODateLocal(weekOf)), [weekOf]);
-  const periodLabel = useMemo(() => computePeriodLabel(viewMode, currentMonday), [viewMode, currentMonday]);
+  // In month mode, the label tracks `monthAnchor` directly. Deriving from
+  // `currentMonday` could land on the wrong month name when the chevron sets
+  // weekOf to `getMonday(monthFirstDay)` and that Monday falls in the previous
+  // month (e.g. month starts on a Tuesday → Monday is in the prior month).
+  const periodLabel = useMemo(
+    () =>
+      viewMode === 'month'
+        ? getMonthNameDe(monthAnchor)
+        : computePeriodLabel('week', currentMonday),
+    [viewMode, currentMonday, monthAnchor]
+  );
 
   const dayDates = useMemo(() => {
     const monday = getMonday(parseISODateLocal(weekOf));
@@ -1246,8 +1278,15 @@ export default function StaffCalendarScreen({
     return eachDayOfInterval({ start, end });
   }, [monthAnchor]);
 
+  type MonthStripSource =
+    | { type: 'facility'; ev: FacilityEventItem }
+    | { type: 'lesson'; row: AssignmentRow };
+  type MonthStripEntry =
+    | { kind: 'closing' }
+    | { kind: 'strip'; label: string; bg: string; source: MonthStripSource };
+
   const monthCellStripByKey = useMemo(() => {
-    const map: Record<string, { kind: 'closing' } | { kind: 'strip'; label: string; bg: string }> = {};
+    const map: Record<string, MonthStripEntry> = {};
     const ymdInEventRange = (k: string, ev: FacilityEventItem) => {
       const s = String(ev.start_date).slice(0, 10);
       const e = String(ev.end_date).slice(0, 10);
@@ -1263,7 +1302,12 @@ export default function StaffCalendarScreen({
       if (dayEvents.length > 0) {
         const ev = [...dayEvents].sort((a, b) => String(a.title).localeCompare(String(b.title)))[0];
         const v = getFacilityEventVisuals(ev);
-        map[k] = { kind: 'strip', label: String(ev.title || '').trim() || v.category, bg: v.colorHex };
+        map[k] = {
+          kind: 'strip',
+          label: String(ev.title || '').trim() || v.category,
+          bg: v.colorHex,
+          source: { type: 'facility', ev },
+        };
         return;
       }
       const dow = d.getDay() === 0 ? 7 : d.getDay();
@@ -1276,7 +1320,12 @@ export default function StaffCalendarScreen({
         const more = rows.length - 1;
         const base = first.subject_name;
         const label = more > 0 ? `${base} (+${more})` : base;
-        map[k] = { kind: 'strip', label, bg: v.colorHex };
+        map[k] = {
+          kind: 'strip',
+          label,
+          bg: v.colorHex,
+          source: { type: 'lesson', row: first },
+        };
       }
     });
     return map;
@@ -1372,6 +1421,7 @@ export default function StaffCalendarScreen({
   };
 
   const showLessonPreview = (r: AssignmentRow, dayIndex: number) => {
+    haptics.tap();
     const monday = getMonday(parseISODateLocal(weekOf));
     const d = new Date(monday);
     d.setDate(monday.getDate() + (dayIndex - 1));
@@ -1382,14 +1432,20 @@ export default function StaffCalendarScreen({
     const teacher = r.teacher_id ? staffNameById.get(r.teacher_id) || '—' : '—';
     const room = r.room || '—';
     const v = getEventVisuals(r.subject_name);
-    setPreviewTitle(r.subject_name);
-    setPreviewBody(
-      `${v.category}\n${dateLabel} · ${r.period_start}–${r.period_end}\nKlassen/Gruppen: ${clsLabel}\nPersonal: ${teacher}\nRaum: ${room}`
-    );
-    setPreviewOpen(true);
+    setPreviewData({
+      title: r.subject_name,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${r.period_start}–${r.period_end}`,
+      classes: clsLabel,
+      teacher,
+      room,
+    });
   };
 
   const showFacilityPreview = (ev: FacilityEventItem, dayIndex: number, start: string, end: string) => {
+    haptics.tap();
     const monday = getMonday(parseISODateLocal(weekOf));
     const d = new Date(monday);
     d.setDate(monday.getDate() + (dayIndex - 1));
@@ -1397,11 +1453,57 @@ export default function StaffCalendarScreen({
     const v = getFacilityEventVisuals(ev);
     const classesLabel =
       (ev.target_classes || []).length > 0 ? (ev.target_classes || []).join(', ') : 'Alle Klassen';
-    setPreviewTitle(ev.title);
-    setPreviewBody(
-      `${v.category}\n${dateLabel} · ${start}–${end}\n${classesLabel}${ev.cancel_meal ? '\nVerpflegung storniert' : ''}`
-    );
-    setPreviewOpen(true);
+    setPreviewData({
+      title: ev.title,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${start}–${end}`,
+      classes: classesLabel,
+      cancelMeal: ev.cancel_meal,
+    });
+  };
+
+  // Month-view preview helpers — take a Date directly so the date label is
+  // correct regardless of the current week-anchored `weekOf` state.
+  const showFacilityPreviewForDate = (ev: FacilityEventItem, day: Date) => {
+    haptics.tap();
+    const dateLabel = format(day, 'dd.MM.yyyy', { locale: de });
+    const v = getFacilityEventVisuals(ev);
+    const classesLabel =
+      (ev.target_classes || []).length > 0 ? (ev.target_classes || []).join(', ') : 'Alle Klassen';
+    const start = String(ev.start_time || '').slice(0, 5);
+    const end = String(ev.end_time || '').slice(0, 5);
+    setPreviewData({
+      title: ev.title,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: ev.all_day || !start ? 'Ganztägig' : `${start}–${end}`,
+      classes: classesLabel,
+      cancelMeal: ev.cancel_meal,
+    });
+  };
+
+  const showLessonPreviewForDate = (r: AssignmentRow, day: Date) => {
+    haptics.tap();
+    const dateLabel = format(day, 'dd.MM.yyyy', { locale: de });
+    const v = getEventVisuals(r.subject_name);
+    const mergedKey = `${r.subject_id}-${r.day_of_week}-${r.period_start}`;
+    const mergedClasses = mergedClassesMap.get(mergedKey) || [];
+    const clsLabel = mergedClasses.length > 0 ? mergedClasses.join(', ') : r.class;
+    const teacher = r.teacher_id ? staffNameById.get(r.teacher_id) || '—' : '—';
+    const room = r.room || '—';
+    setPreviewData({
+      title: r.subject_name,
+      category: v.category,
+      accentColor: v.colorHex,
+      dateLabel,
+      timeLabel: `${r.period_start}–${r.period_end}`,
+      classes: clsLabel,
+      teacher,
+      room,
+    });
   };
 
   const gridMinWidth = TIME_COL_W + 5 * DAY_MIN_W;
@@ -1605,7 +1707,14 @@ export default function StaffCalendarScreen({
         style={styles.navBar}
       >
         <View style={styles.navLeft}>
-          <TouchableOpacity style={styles.navPill} onPress={() => setWeekOf(formatLocalYYYYMMDD(getMonday(new Date())))}>
+          <TouchableOpacity
+            style={styles.navPill}
+            onPress={() => {
+              const today = new Date();
+              setWeekOf(formatLocalYYYYMMDD(getMonday(today)));
+              setMonthAnchor(startOfMonth(today));
+            }}
+          >
             <Text style={styles.navPillText}>Heute</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1613,8 +1722,14 @@ export default function StaffCalendarScreen({
               if (viewMode === 'week') {
                 setWeekOf(formatLocalYYYYMMDD(addDays(currentMonday, -7)));
               } else {
-                const prevMonth = new Date(currentMonday.getFullYear(), currentMonday.getMonth() - 1, 1);
-                setWeekOf(formatLocalYYYYMMDD(getMonday(prevMonth)));
+                // Step exactly one calendar month back. Set monthAnchor first
+                // so the grid updates predictably; sync weekOf for the period
+                // label.
+                const prevMonthFirst = startOfMonth(
+                  new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() - 1, 1)
+                );
+                setMonthAnchor(prevMonthFirst);
+                setWeekOf(formatLocalYYYYMMDD(getMonday(prevMonthFirst)));
               }
             }}
           >
@@ -1625,8 +1740,11 @@ export default function StaffCalendarScreen({
               if (viewMode === 'week') {
                 setWeekOf(formatLocalYYYYMMDD(addDays(currentMonday, 7)));
               } else {
-                const nextMonth = new Date(currentMonday.getFullYear(), currentMonday.getMonth() + 1, 1);
-                setWeekOf(formatLocalYYYYMMDD(getMonday(nextMonth)));
+                const nextMonthFirst = startOfMonth(
+                  new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() + 1, 1)
+                );
+                setMonthAnchor(nextMonthFirst);
+                setWeekOf(formatLocalYYYYMMDD(getMonday(nextMonthFirst)));
               }
             }}
           >
@@ -1636,13 +1754,19 @@ export default function StaffCalendarScreen({
         </View>
         <View style={styles.segment}>
           <TouchableOpacity
-            onPress={() => setViewMode('week')}
+            onPress={() => {
+              if (viewMode !== 'week') haptics.selection();
+              setViewMode('week');
+            }}
             style={[styles.segmentBtn, viewMode === 'week' && styles.segmentBtnActive]}
           >
             <Text style={[styles.segmentText, viewMode === 'week' && styles.segmentTextActive]}>Woche</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setViewMode('month')}
+            onPress={() => {
+              if (viewMode !== 'month') haptics.selection();
+              setViewMode('month');
+            }}
             style={[styles.segmentBtn, viewMode === 'month' && styles.segmentBtnActive]}
           >
             <Text style={[styles.segmentText, viewMode === 'month' && styles.segmentTextActive]}>Monat</Text>
@@ -1690,17 +1814,122 @@ export default function StaffCalendarScreen({
                   ]}
                 >
                   <Text style={styles.hdrDayText}>{dayDates[idx]}</Text>
-                  {closingDayKeys.has(weekDateKeys[idx]) ? (
-                    <View style={styles.closingBadge}>
-                      <Text style={styles.closingBadgeText}>Schließtag</Text>
-                    </View>
-                  ) : null}
                 </View>
               ))}
             </View>
 
             {timeSlots.length === 0 ? (
-              <Text style={styles.emptyGrid}>Keine Stunden im Stundenplan hinterlegt.</Text>
+              (() => {
+                const fallbackEventsByDay = [1, 2, 3, 4, 5].map((_, idx) => {
+                  const dateKey = weekDateKeys[idx];
+                  return dateKey
+                    ? facilityEvents.filter((ev) => {
+                        const s = String(ev.start_date).slice(0, 10);
+                        const e = String(ev.end_date).slice(0, 10);
+                        return dateKey >= s && dateKey <= e;
+                      })
+                    : [];
+                });
+                const closingByDay = [1, 2, 3, 4, 5].map((_, idx) => {
+                  const dateKey = weekDateKeys[idx];
+                  return dateKey ? closingDayKeys.has(dateKey) : false;
+                });
+                const totalFallbackEvents = fallbackEventsByDay.reduce(
+                  (sum, list) => sum + list.length,
+                  0
+                );
+                const totalClosingDays = closingByDay.filter(Boolean).length;
+                if (totalFallbackEvents === 0 && totalClosingDays === 0) {
+                  return <Text style={styles.emptyGrid}>Keine Stunden im Stundenplan hinterlegt.</Text>;
+                }
+                return (
+                  <View style={styles.gridRow}>
+                    <View style={[styles.timeCell, { width: TIME_COL_W }]} />
+                    {[1, 2, 3, 4, 5].map((di, idx) => {
+                      const dateKey = weekDateKeys[idx];
+                      const dayEvents = fallbackEventsByDay[idx];
+                      const isClosingDay = closingByDay[idx];
+                      return (
+                        <View
+                          key={`fallback-${di}`}
+                          style={[
+                            styles.cell,
+                            {
+                              flex: 1,
+                              minWidth: DAY_MIN_W,
+                              minHeight: ROW_H * 2,
+                              paddingVertical: 6,
+                            },
+                            todayDayIndex === di && styles.cellTodayBg,
+                          ]}
+                        >
+                          {isClosingDay ? (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => {
+                                const dayDate = parseISODateLocal(dateKey || '');
+                                haptics.tap();
+                                setPreviewData({
+                                  title: 'Schließtag',
+                                  category: 'Schließtag',
+                                  accentColor: '#dc2626',
+                                  dateLabel: format(dayDate, 'dd.MM.yyyy', { locale: de }),
+                                  timeLabel: 'Ganztägig',
+                                  classes: 'Alle Klassen',
+                                });
+                              }}
+                              style={{
+                                backgroundColor: '#dc2626',
+                                borderRadius: 6,
+                                paddingHorizontal: 6,
+                                paddingVertical: 4,
+                                marginBottom: 4,
+                              }}
+                            >
+                              <Text style={styles.eventTitle} numberOfLines={1}>
+                                Schließtag
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {dayEvents.map((ev) => {
+                            const v = getFacilityEventVisuals(ev);
+                            const start = String(ev.start_time || '').slice(0, 5);
+                            const end = String(ev.end_time || '').slice(0, 5);
+                            return (
+                              <TouchableOpacity
+                                key={`fallback-ev-${ev.id}-${di}`}
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  const dayDate = parseISODateLocal(dateKey || '');
+                                  showFacilityPreviewForDate(ev, dayDate);
+                                }}
+                                onLongPress={() => openEditFacilityEvent(ev)}
+                                style={{
+                                  backgroundColor: v.colorHex || '#3b82f6',
+                                  borderRadius: 6,
+                                  paddingHorizontal: 6,
+                                  paddingVertical: 4,
+                                  marginBottom: 4,
+                                }}
+                              >
+                                <Text style={styles.eventTitle} numberOfLines={2}>
+                                  {ev.title}
+                                </Text>
+                                {!ev.all_day && start ? (
+                                  <Text style={styles.eventSub} numberOfLines={1}>
+                                    {start}
+                                    {end ? ` – ${end}` : ''}
+                                  </Text>
+                                ) : null}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              })()
             ) : (
               timeSlots.map((start, rowIndex) => {
                 const allBreak = [1, 2, 3, 4, 5].every((di) => isBreak(di, start));
@@ -1765,7 +1994,7 @@ export default function StaffCalendarScreen({
                                     style={[
                                       styles.eventAbs,
                                       {
-                                        backgroundColor: v.colorHex,
+                                        backgroundColor: v.colorHex || '#3b82f6',
                                         left: `${leftPct}%`,
                                         width: `${wPct}%`,
                                         height: Math.max(ROW_H * fr.span - 6, ROW_H - 4),
@@ -1796,7 +2025,7 @@ export default function StaffCalendarScreen({
                                     style={[
                                       span > 1 ? styles.lessonAbs : styles.lessonInline,
                                       {
-                                        backgroundColor: v.colorHex,
+                                        backgroundColor: v.colorHex || '#22c55e',
                                         minHeight: span > 1 ? ROW_H * span - 4 : undefined,
                                       },
                                     ]}
@@ -1829,22 +2058,9 @@ export default function StaffCalendarScreen({
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={isWide ? styles.listWide : styles.monthScrollContent}
         >
-          <View style={styles.monthNavRow}>
-            <TouchableOpacity
-              onPress={() => setMonthAnchor((d) => startOfMonth(new Date(d.getFullYear(), d.getMonth() - 1, 1)))}
-            >
-              <Text style={styles.navBtn}>‹</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setMonthAnchor(startOfMonth(new Date()))}>
-              <Text style={styles.todayBtn}>Heute</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setMonthAnchor((d) => startOfMonth(new Date(d.getFullYear(), d.getMonth() + 1, 1)))}
-            >
-              <Text style={styles.navBtn}>›</Text>
-            </TouchableOpacity>
-            <Text style={styles.monthTitle}>{getMonthNameDe(monthAnchor)}</Text>
-          </View>
+          {/* Month chevrons + label live in the top navBar; the previous
+              duplicate row that lived here has been removed to keep a single
+              source of truth for view-mode navigation. */}
           <View style={styles.weekRow}>
             {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((w) => (
               <Text key={w} style={[styles.weekHdr, { width: cellSize }]}>
@@ -1869,7 +2085,26 @@ export default function StaffCalendarScreen({
                     sel && styles.cellSel,
                     isClosingCell && styles.cellMonthClosing,
                   ]}
-                  onPress={() => setSelectedDay(d)}
+                  onPress={() => {
+                    setSelectedDay(d);
+                    if (strip?.kind === 'strip') {
+                      if (strip.source.type === 'facility') {
+                        showFacilityPreviewForDate(strip.source.ev, d);
+                      } else {
+                        showLessonPreviewForDate(strip.source.row, d);
+                      }
+                    } else if (strip?.kind === 'closing') {
+                      haptics.tap();
+                      setPreviewData({
+                        title: 'Schließtag',
+                        category: 'Schließtag',
+                        accentColor: '#dc2626',
+                        dateLabel: format(d, 'dd.MM.yyyy', { locale: de }),
+                        timeLabel: 'Ganztägig',
+                        classes: 'Alle Klassen',
+                      });
+                    }
+                  }}
                   activeOpacity={0.85}
                 >
                   <View style={styles.cellMonthInner}>
@@ -1958,16 +2193,89 @@ export default function StaffCalendarScreen({
         </Pressable>
       </Modal>
 
-      <Modal visible={previewOpen} transparent animationType="fade">
-        <Pressable style={styles.pickBackdrop} onPress={() => setPreviewOpen(false)}>
-          <Pressable style={styles.pickSheet} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>{previewTitle}</Text>
-            <Text style={styles.previewBody}>{previewBody}</Text>
-            <TouchableOpacity onPress={() => setPreviewOpen(false)} style={styles.btnPrimary}>
-              <Text style={styles.btnPrimaryText}>Schließen</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
+      <Modal
+        visible={previewData != null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPreviewData(null)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.previewSheetBackdrop} onPress={() => setPreviewData(null)} />
+        <View
+          style={[
+            styles.previewSheet,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+          ]}
+        >
+          <View style={styles.previewSheetHandleRow}>
+            <View style={styles.previewSheetHandle} />
+          </View>
+          <View
+            style={[styles.previewAccent, { backgroundColor: previewData?.accentColor || '#22c55e' }]}
+          />
+          <View style={styles.previewBodyContent}>
+            <View style={styles.previewHeaderRow}>
+              <Text style={styles.previewSheetTitle} numberOfLines={2}>
+                {previewData?.title ?? ''}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setPreviewData(null)}
+                hitSlop={12}
+                style={styles.previewCloseIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Schließen"
+              >
+                <Ionicons name="close" size={22} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            {previewData?.category ? (
+              <View style={styles.previewCategoryPill}>
+                <Text style={styles.previewCategoryText}>{previewData.category}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.previewRow}>
+              <Ionicons name="calendar-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Datum</Text>
+              <Text style={styles.previewValue}>{previewData?.dateLabel ?? '—'}</Text>
+            </View>
+
+            <View style={styles.previewRow}>
+              <Ionicons name="time-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Zeit</Text>
+              <Text style={styles.previewValue}>{previewData?.timeLabel ?? '—'}</Text>
+            </View>
+
+            <View style={styles.previewRow}>
+              <Ionicons name="people-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+              <Text style={styles.previewLabel}>Klassen</Text>
+              <Text style={styles.previewValue}>{previewData?.classes ?? '—'}</Text>
+            </View>
+
+            {previewData?.teacher ? (
+              <View style={styles.previewRow}>
+                <Ionicons name="person-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+                <Text style={styles.previewLabel}>Personal</Text>
+                <Text style={styles.previewValue}>{previewData.teacher}</Text>
+              </View>
+            ) : null}
+
+            {previewData?.room ? (
+              <View style={styles.previewRow}>
+                <Ionicons name="location-outline" size={18} color="#6b7280" style={styles.previewIcon} />
+                <Text style={styles.previewLabel}>Raum</Text>
+                <Text style={styles.previewValue}>{previewData.room}</Text>
+              </View>
+            ) : null}
+
+            {previewData?.cancelMeal ? (
+              <View style={styles.previewRow}>
+                <Ionicons name="warning-outline" size={18} color="#b45309" style={styles.previewIcon} />
+                <Text style={[styles.previewValue, { color: '#b45309' }]}>Verpflegung storniert</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
       </Modal>
 
       <CalendarCreateEntryModal
@@ -2267,12 +2575,12 @@ const styles = StyleSheet.create({
   hdrDayText: { fontSize: 10, fontWeight: '600', color: '#111827', textAlign: 'center' },
   closingBadge: {
     marginTop: 2,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#dc2626',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#111827' },
+  closingBadgeText: { fontSize: 9, fontWeight: '700', color: '#ffffff' },
   gridRow: { flexDirection: 'row', borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#e5e7eb' },
   timeCell: {
     paddingVertical: 3,
@@ -2341,16 +2649,98 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 11, color: '#6b7280' },
   listWide: { maxWidth: 900, alignSelf: 'center', width: '100%', paddingBottom: 12 },
   monthScrollContent: { paddingBottom: 12 },
-  monthNavRow: {
+  // Event-detail bottom sheet
+  previewSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  previewSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 12,
+  },
+  previewSheetHandleRow: {
+    paddingTop: 10,
+    paddingBottom: 6,
+    alignItems: 'center',
+  },
+  previewSheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#d1d5db',
+  },
+  previewAccent: {
+    height: 6,
+    width: '100%',
+  },
+  previewBodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  previewHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 8,
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  navBtn: { fontSize: 22, color: '#111827', fontWeight: '700', paddingHorizontal: 8 },
-  todayBtn: { fontSize: 14, color: '#111827', fontWeight: '600' },
-  monthTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginLeft: 8 },
+  previewSheetTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  previewCloseIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  previewCategoryPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f3f4f6',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    marginBottom: 14,
+  },
+  previewCategoryText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  previewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#f3f4f6',
+  },
+  previewIcon: { marginRight: 12 },
+  previewLabel: {
+    width: 80,
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  previewValue: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
   weekRow: { flexDirection: 'row', marginTop: 4 },
   weekHdr: { textAlign: 'center', fontSize: 12, color: '#6b7280', fontWeight: '600' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
@@ -2417,7 +2807,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e5e7eb',
   },
   pickRowText: { fontSize: 16, color: '#111827' },
-  previewBody: { fontSize: 15, color: '#374151', marginVertical: 16, lineHeight: 22 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
