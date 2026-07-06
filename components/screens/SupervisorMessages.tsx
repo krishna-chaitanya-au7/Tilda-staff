@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, KeyboardAvoidingView, Platform, Modal, Alert, Switch, Linking, Pressable } from 'react-native';
+import { FlatList, StyleSheet, TouchableOpacity, View, Image, ActivityIndicator, TextInput, ScrollView, useWindowDimensions, Text, Keyboard, Platform, Modal, Alert, Switch, Linking, Pressable } from 'react-native';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -88,6 +89,24 @@ export default function SupervisorMessages() {
   const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const tabBarHeight = useBottomTabBarHeight();
+
+  // Track keyboard height so we can lift the chat input by exactly the right amount.
+  // (KeyboardAvoidingView misbehaves with Android edge-to-edge, leaving stray whitespace.)
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  // The input already sits tabBarHeight above the screen bottom, and the keyboard
+  // overlays the tab bar, so we only need to lift it by the difference.
+  const keyboardLift = keyboardHeight > 0 ? Math.max(0, keyboardHeight - tabBarHeight) + 27 : 0;
 
   // --- STATE DEFINITIONS ---
   
@@ -1462,11 +1481,7 @@ export default function SupervisorMessages() {
             </View>
 
              {selectedThread ? (
-                <KeyboardAvoidingView 
-                   behavior={Platform.OS === "ios" ? "padding" : undefined} 
-                   keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0} 
-                   style={{ flex: 1, flexDirection: 'column' }}
-                >
+                <View style={{ flex: 1, flexDirection: 'column', paddingBottom: keyboardLift }}>
                     <View style={{ flex: 1, backgroundColor: '#fff' }}>
                         <View style={[styles.chatArea, { flex: 1 }]}>
                            {loadingMessages ? (
@@ -1621,13 +1636,9 @@ export default function SupervisorMessages() {
                           <Ionicons name="send" size={18} color="#fff" />
                        </TouchableOpacity>
                     </View>
-                </KeyboardAvoidingView>
+                </View>
              ) : (
-                <KeyboardAvoidingView 
-                   behavior={Platform.OS === "ios" ? "padding" : undefined} 
-                   keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0} 
-                   style={{ flex: 1, flexDirection: 'column' }}
-                >
+                <View style={{ flex: 1, flexDirection: 'column', paddingBottom: keyboardLift }}>
                     <View style={{ flex: 1, padding: 20, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center' }}>
                         <ThemedText style={{ color: '#666', fontSize: 16 }}>Wählen Sie eine Unterhaltung aus.</ThemedText>
                     </View>
@@ -1649,7 +1660,7 @@ export default function SupervisorMessages() {
                           <Ionicons name="send" size={18} color="#fff" />
                        </TouchableOpacity>
                     </View>
-                </KeyboardAvoidingView>
+                </View>
              )}
 
              {!isMobile && showParticipantsOverlay && (
@@ -1698,8 +1709,9 @@ export default function SupervisorMessages() {
          )}
        </View>
        
-         {/* Bottom spacer for Tab Bar - needed for mobile or iOS (absolute tabs) */}
-       {(isMobile || Platform.OS === 'ios') && <View style={{ height: 95 }} />}
+         {/* Bottom spacer only when the tab bar floats above content (iOS = absolute).
+           On Android the tab bar is in-flow, so content already sits right on top of it. */}
+       {Platform.OS === 'ios' && <View style={{ height: tabBarHeight }} />}
        
        <Modal visible={isNewConvModalVisible} animationType="fade" transparent={true} onRequestClose={() => setIsNewConvModalVisible(false)}>
           <View style={styles.modalOverlay}>
@@ -1922,7 +1934,7 @@ const styles = StyleSheet.create({
   threadTitle: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 8 },
   timestamp: { fontSize: 10, color: '#8E8E93' },
   previewText: { fontSize: 12, color: '#8E8E93', lineHeight: 16 },
-  newConvButtonContainer: { padding: 16, borderTopWidth: 1, borderTopColor: '#E5E5EA', paddingBottom: 32 },
+  newConvButtonContainer: { padding: 16, borderTopWidth: 1, borderTopColor: '#E5E5EA', paddingBottom: 16 },
   newConvButton: { backgroundColor: '#111', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 24, gap: 8, height: 48 },
   newConvButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   participantsContainer: { padding: 16, borderTopWidth: 1, borderTopColor: '#E5E5EA', backgroundColor: '#fff', maxHeight: 250, flexShrink: 0 },

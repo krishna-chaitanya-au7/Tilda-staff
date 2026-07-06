@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, TouchableOpacity, View, Text, Modal, TextInput, Alert, ScrollView, useWindowDimensions, TouchableWithoutFeedback } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, TouchableOpacity, View, Text, Modal, TextInput, Alert, useWindowDimensions, TouchableWithoutFeedback, Platform } from 'react-native';
 import { format, addDays, subDays, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
@@ -57,6 +59,8 @@ interface ChildRecord {
     allergies?: string[];
     secondary_allergies?: (string | number)[];
     is_bus_child?: boolean;
+    bus_stop?: string;
+    kindergarten_schedule?: { day: string; lunch?: string; drop_time?: string; pickup_time?: string }[];
     facility_id?: string;
   };
 }
@@ -249,12 +253,7 @@ const ChildAttendanceMobileCard = React.memo(({
 });
 
 const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
-  <ScrollView
-    horizontal
-    showsHorizontalScrollIndicator={false}
-    contentContainerStyle={mobileStyles.statStripContent}
-    style={mobileStyles.statStrip}
-  >
+  <View style={mobileStyles.statGrid}>
     <View style={[mobileStyles.statPill, { backgroundColor: '#E3F2FD' }]}>
       <Text style={[mobileStyles.statPillValue, { color: '#1565C0' }]}>{stats.total}</Text>
       <Text style={[mobileStyles.statPillLabel, { color: '#1565C0' }]}>Betreuung</Text>
@@ -279,7 +278,7 @@ const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
       <Text style={[mobileStyles.statPillValue, { color: '#EF6C00' }]}>{stats.bus}</Text>
       <Text style={[mobileStyles.statPillLabel, { color: '#EF6C00' }]}>Bus</Text>
     </TouchableOpacity>
-  </ScrollView>
+  </View>
 );
 
 const mobileStyles = StyleSheet.create({
@@ -380,17 +379,18 @@ const mobileStyles = StyleSheet.create({
   quickBtn: {
     padding: 2,
   },
-  statStrip: {
-    marginBottom: 12,
-  },
-  statStripContent: {
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: 8,
+    marginBottom: 12,
     gap: 8,
   },
   statPill: {
-    minWidth: 84,
+    width: '48%',
+    flexGrow: 1,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 14,
     alignItems: 'center',
   },
@@ -455,6 +455,18 @@ const supMobileNav = StyleSheet.create({
     borderRadius: 10,
   },
   msgBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  pdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  pdfBtnText: { color: '#111827', fontWeight: '700', fontSize: 13 },
 });
 
 const ChildAttendanceRow = React.memo(({
@@ -1302,6 +1314,172 @@ export default function SupervisorAttendanceScreen() {
     });
   }, []);
 
+  // --- PDF Export ---
+
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPdf = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const escapeHtml = (val: any) =>
+        String(val ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+      // Today's relevant children (respecting active filters), sorted by name
+      const rows = children
+        .filter(c => hasSupervisionToday(c))
+        .filter(c => {
+          if (searchTerm) {
+            const name = `${c.family_name} ${c.first_name}`.toLowerCase();
+            if (!name.includes(searchTerm.toLowerCase())) return false;
+          }
+          if (classFilter !== 'all' && c.children_info?.class !== classFilter) return false;
+          if (groupFilter !== 'all') {
+            const g = getGroup(c);
+            if (groupFilter === 'No Group' ? g !== 'No Group' : g !== groupFilter) return false;
+          }
+          if (statusFilter !== 'all') {
+            const rec = getAttendanceStatus(c);
+            if (statusFilter === 'on_leave') return Boolean(rec?.is_leave);
+            if (statusFilter === 'pending') return !rec || rec.status === 'Pending';
+            if (!rec) return false;
+            return rec.status.toLowerCase() === statusFilter.toLowerCase();
+          }
+          return true;
+        })
+        .sort((a, b) =>
+          `${a.family_name} ${a.first_name}`.localeCompare(
+            `${b.family_name} ${b.first_name}`,
+            'de',
+            { numeric: true, sensitivity: 'base' }
+          )
+        );
+
+      if (rows.length === 0) {
+        Alert.alert('Keine Daten', 'Für diesen Tag gibt es keine Kinder zum Exportieren.');
+        setExporting(false);
+        return;
+      }
+
+      const facilityLabel =
+        selectedFacility === 'all'
+          ? 'Alle Einrichtungen'
+          : getFacilityName(selectedFacility || undefined);
+      const dateLabel = format(selectedDate, 'EEEE, dd.MM.yyyy', { locale: de });
+
+      const bodyRows = rows
+        .map(c => {
+          const info = c.children_info || {};
+          const meal = mealSelections.find(m => m.user_id === c.id);
+          const hasMeal = meal && !meal.is_deleted && !meal.is_skipped;
+          const mealName = hasMeal ? (meal?.menuline?.name || 'Menü') : '–';
+          const daySchedule = (info.kindergarten_schedule || []).find(
+            (s: any) => s.day === getCurrentDayAbbreviation()
+          );
+          const drop = daySchedule?.drop_time?.trim();
+          const pickup = daySchedule?.pickup_time?.trim();
+          const busInfo = drop || pickup ? `${drop || '–'} – ${pickup || '–'}` : '–';
+          const rec = attendanceRecords.find(r => r.user_id === c.id);
+          const statusLabel = rec?.is_leave
+            ? 'Krank'
+            : rec?.status === 'Present'
+              ? 'Anwesend'
+              : rec?.status === 'Absent'
+                ? 'Abwesend'
+                : 'Ausstehend';
+          return `
+            <tr>
+              <td>${escapeHtml(`${c.family_name} ${c.first_name}`)}</td>
+              <td>${escapeHtml(busInfo)}</td>
+              <td>${escapeHtml(info.class || '–')}</td>
+              <td>${escapeHtml(mealName)}</td>
+              <td>${escapeHtml(statusLabel)}</td>
+            </tr>`;
+        })
+        .join('');
+
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              * { font-family: -apple-system, Helvetica, Arial, sans-serif; }
+              body { padding: 24px; color: #111827; }
+              h1 { font-size: 20px; margin: 0 0 4px; }
+              .meta { font-size: 12px; color: #6B7280; margin-bottom: 16px; }
+              table { width: 100%; border-collapse: collapse; font-size: 12px; }
+              th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E5E7EB; }
+              th { background: #F9FAFB; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: #6B7280; }
+              tr:nth-child(even) td { background: #FBFBFD; }
+            </style>
+          </head>
+          <body>
+            <h1>Anwesenheit</h1>
+            <div class="meta">${escapeHtml(facilityLabel)} · ${escapeHtml(dateLabel)} · ${rows.length} Kinder</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Buszeit</th>
+                  <th>Klasse</th>
+                  <th>Essen</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>${bodyRows}</tbody>
+            </table>
+          </body>
+        </html>`;
+
+      if (Platform.OS === 'web') {
+        // expo-print's web path prints the whole document; use an isolated
+        // iframe so only the attendance table is sent to the printer.
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        document.body.appendChild(iframe);
+
+        const doc = iframe.contentWindow?.document;
+        if (doc) {
+          doc.open();
+          doc.write(html);
+          doc.close();
+          const win = iframe.contentWindow!;
+          const cleanup = () => {
+            setTimeout(() => {
+              if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+            }, 500);
+          };
+          win.onafterprint = cleanup;
+          // Give the iframe a tick to lay out before printing.
+          setTimeout(() => {
+            win.focus();
+            win.print();
+            cleanup();
+          }, 250);
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: '.pdf' });
+        }
+      }
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      Alert.alert('Fehler', 'PDF konnte nicht erstellt werden.');
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, children, searchTerm, classFilter, groupFilter, statusFilter, mealSelections, attendanceRecords, selectedFacility, selectedDate, facilities, getGroup]);
+
   // --- Filtered Data ---
 
   const filteredData = useMemo(() => {
@@ -1610,28 +1788,56 @@ export default function SupervisorAttendanceScreen() {
                         <Text style={supMobileNav.sectionTitle}>
                           Anwesenheit {selectedIds.size > 0 ? `· ${selectedIds.size}` : ''}
                         </Text>
-                        <TouchableOpacity
-                          style={[supMobileNav.msgBtn, selectedIds.size === 0 && { opacity: 0.4 }]}
-                          disabled={selectedIds.size === 0}
-                          onPress={() => setSendMessageOpen(true)}
-                        >
-                          <Ionicons name="mail-outline" size={16} color="#fff" />
-                          <Text style={supMobileNav.msgBtnText}>Senden</Text>
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <TouchableOpacity
+                            style={[supMobileNav.pdfBtn, exporting && { opacity: 0.4 }]}
+                            disabled={exporting}
+                            onPress={handleExportPdf}
+                          >
+                            {exporting ? (
+                              <ActivityIndicator size="small" color="#111827" />
+                            ) : (
+                              <Ionicons name="print-outline" size={16} color="#111827" />
+                            )}
+                            <Text style={supMobileNav.pdfBtnText}>PDF</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[supMobileNav.msgBtn, selectedIds.size === 0 && { opacity: 0.4 }]}
+                            disabled={selectedIds.size === 0}
+                            onPress={() => setSendMessageOpen(true)}
+                          >
+                            <Ionicons name="mail-outline" size={16} color="#fff" />
+                            <Text style={supMobileNav.msgBtnText}>Senden</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </>
                   ) : (
                     <>
                       <View style={styles.titleRow}>
                           <Text style={styles.sectionTitle}>Anwesenheit</Text>
-                          <TouchableOpacity
-                            style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
-                            disabled={selectedIds.size === 0}
-                            onPress={() => setSendMessageOpen(true)}
-                          >
-                              <Ionicons name="mail-outline" size={18} color="#fff" />
-                              <Text style={styles.messageButtonText}>Nachricht senden</Text>
-                          </TouchableOpacity>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <TouchableOpacity
+                              style={[styles.pdfButton, exporting && styles.messageButtonDisabled]}
+                              disabled={exporting}
+                              onPress={handleExportPdf}
+                            >
+                                {exporting ? (
+                                  <ActivityIndicator size="small" color="#111827" />
+                                ) : (
+                                  <Ionicons name="print-outline" size={18} color="#111827" />
+                                )}
+                                <Text style={styles.pdfButtonText}>PDF</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.messageButton, selectedIds.size === 0 && styles.messageButtonDisabled]}
+                              disabled={selectedIds.size === 0}
+                              onPress={() => setSendMessageOpen(true)}
+                            >
+                                <Ionicons name="mail-outline" size={18} color="#fff" />
+                                <Text style={styles.messageButtonText}>Nachricht senden</Text>
+                            </TouchableOpacity>
+                          </View>
                       </View>
 
                       <View style={styles.dateControls}>
@@ -1987,6 +2193,22 @@ const styles = StyleSheet.create({
   },
   messageButtonText: {
     color: '#fff',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  pdfButton: {
+    backgroundColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  pdfButtonText: {
+    color: '#111827',
     fontWeight: '600',
     fontSize: 13,
   },

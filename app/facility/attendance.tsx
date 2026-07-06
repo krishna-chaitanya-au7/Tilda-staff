@@ -2,7 +2,6 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -75,12 +74,7 @@ const StatsCard = ({ title, value, color = '#000', bgColor = '#F5F5F5', showInfo
 );
 
 const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
-  <ScrollView
-    horizontal
-    showsHorizontalScrollIndicator={false}
-    contentContainerStyle={mobileStyles.statStripContent}
-    style={mobileStyles.statStrip}
-  >
+  <View style={mobileStyles.statGrid}>
     <View style={[mobileStyles.statPill, { backgroundColor: '#E3F2FD' }]}>
       <Text style={[mobileStyles.statPillValue, { color: '#1565C0' }]}>{stats.total}</Text>
       <Text style={[mobileStyles.statPillLabel, { color: '#1565C0' }]}>Betreuung</Text>
@@ -105,7 +99,7 @@ const MobileStatsStrip = ({ stats, onInfoPressSick, onInfoPressBus }: any) => (
       <Text style={[mobileStyles.statPillValue, { color: '#EF6C00' }]}>{stats.bus}</Text>
       <Text style={[mobileStyles.statPillLabel, { color: '#EF6C00' }]}>Bus</Text>
     </TouchableOpacity>
-  </ScrollView>
+  </View>
 );
 
 const mobileStyles = StyleSheet.create({
@@ -153,10 +147,12 @@ const mobileStyles = StyleSheet.create({
   statusBtnText: { fontSize: 13, fontWeight: '700' },
   quickStatus: { flexDirection: 'row', gap: 8 },
   quickBtn: { padding: 2 },
-  statStrip: { marginBottom: 12 },
-  statStripContent: { paddingHorizontal: 8, gap: 8 },
+  statGrid: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    paddingHorizontal: 8, marginBottom: 12, gap: 8,
+  },
   statPill: {
-    minWidth: 84, paddingHorizontal: 14, paddingVertical: 10,
+    width: '48%', flexGrow: 1, paddingHorizontal: 14, paddingVertical: 12,
     borderRadius: 14, alignItems: 'center',
   },
   statPillValue: { fontSize: 22, fontWeight: '800' },
